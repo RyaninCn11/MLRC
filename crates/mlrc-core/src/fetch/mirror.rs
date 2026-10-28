@@ -31,7 +31,7 @@ pub enum Mirror {
     Bmclapi,
 }
 
-const REPLACEMENTS: [(&str, &str); 8] = [
+const REPLACEMENTS: [(&str, &str); 10] = [
     ("https://piston-meta.mojang.com", BMCLAPI_BASE),
     ("https://piston-data.mojang.com", BMCLAPI_BASE),
     ("https://launchermeta.mojang.com", BMCLAPI_BASE),
@@ -50,6 +50,14 @@ const REPLACEMENTS: [(&str, &str); 8] = [
     ),
     (
         "https://maven.fabricmc.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    (
+        "https://maven.minecraftforge.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    (
+        "https://maven.neoforged.net/releases",
         "https://bmclapi2.bangbang93.com/maven",
     ),
 ];

@@ -408,14 +408,24 @@ written straight to their destination, still retried, just unverified.
 
 ### 9.4 Loaders
 
-A loader is not a separate install format. `mlrc install <mc> --loader fabric` resolves
-a profile from the loader's meta API, caches it under the id the loader chose
-(`fabric-loader-<loader>-<mc>`), and runs the normal pipeline: the profile's
-`inheritsFrom` pulls in the vanilla client, libraries and assets, and its own libraries
-are prepended to the classpath.
+Two mechanisms behind one command.
 
-Launch resolves the same chain from cached documents, so a loader install starts
-without network access.
+Fabric publishes a version document: `mlrc install <mc> --loader fabric` fetches the
+profile from `meta.fabricmc.net`, caches it under the id Fabric chose
+(`fabric-loader-<loader>-<mc>`), and lets `inheritsFrom` pull in the vanilla client,
+libraries and assets.
+
+Forge and NeoForge are installers. They patch the vanilla client through a processor
+chain that a launcher cannot sensibly reimplement, so MLRC stages a launcher-shaped
+directory (`launcher_profiles.json`, `versions/<mc>/<mc>.{json,jar}`), runs the
+official installer with `--installClient`, and adopts the result: the produced version
+document goes into the metadata cache, the installer's libraries are copied, and the
+vanilla libraries are hardlinked in from the parent version instead of being stored
+twice. The installer's own output is kept at `data/logs/installer-<id>.log`, because
+it is the only explanation when one fails.
+
+Either way the resulting id is what `launch` and `uninstall` take, and launch resolves
+the chain from cached documents, so a loader install starts without network access.
 
 ### 9.5 Model
 
@@ -429,8 +439,8 @@ releases, and a launcher that fails on the unknown is a broken launcher.
 ### 10.1 Commands
 
 ```
-mlrc install <version> [--loader fabric[:<version>]] [--java=auto|install|skip]
-             [--yes] [--dry-run] [--threads N]
+mlrc install <version> [--loader fabric|forge|neoforge[:<version>]]
+             [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
 mlrc launch [<version>] [--instance <name>] [--lang <code>] [--offline]
             [--username <n>] [--width N] [--height N] [--dry-run] [-- <game args>]
 mlrc list [--all] [--json]
@@ -512,6 +522,7 @@ including in `-v` logs and `--dry-run` command lines.
 | A shared public client id is revoked | configurable client id; a self-registered Azure application is documented |
 | Mojang changes the metadata shape | every field defaulted, unknown fields ignored, `doctor` reports unhealthy pieces |
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
+| A loader installer cannot reach its maven | the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
 | Hardlinks are unsupported (FAT32, SMB) | degrade to copy and warn |
 | Non-ASCII text creeps into sources | CI gate |

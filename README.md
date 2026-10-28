@@ -19,11 +19,12 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Launch the game offline with a derived player identity
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
-- [x] Fabric loader: `mlrc install <mc> --loader fabric`
+- [x] Fabric and Forge loaders: `mlrc install <mc> --loader fabric|forge`
 - [x] Named instances, each with its own game directory
 - [x] Set the in-game language before launch (`--lang zh_cn`)
 - [ ] Microsoft account login
-- [ ] Quilt / NeoForge loaders
+- [ ] NeoForge loader (installer path in place, not verified end to end)
+- [ ] Quilt loader
 - [ ] Graphical front-end
 
 ## Requirements
@@ -71,6 +72,14 @@ an instance gives you its own:
 mlrc install 1.21.1 --loader fabric
 mlrc instance create survival --version fabric-loader-0.20.1-1.21.1
 mlrc launch --instance survival
+```
+
+Forge and NeoForge are installed by running their own installer, then launched like
+any other version:
+
+```bash
+mlrc install 1.21.1 --loader forge
+mlrc launch 1.21.1-forge-52.1.20
 ```
 
 Want the game itself in another language? Minecraft has no launch switch for it, so

@@ -1,2 +1,5 @@
 /target
 /data
+
+# Loader installers and the game write logs next to whatever they were started from.
+*.log

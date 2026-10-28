@@ -13,13 +13,15 @@ use mlrc_core::error::{ErrorCode, MlrcError, MlrcResult};
 use mlrc_core::fetch::mirror::{self, Mirror};
 use mlrc_core::fetch::HttpClient;
 use mlrc_core::install::{
-    install as run_install, install_loader as run_install_loader, preview as run_preview,
+    install as run_install, install_installer as run_install_installer,
+    install_loader as run_install_loader, preview as run_preview,
     preview_loader as run_preview_loader, resolve_document as run_resolve_document, InstallOptions,
     JavaMode as CoreJavaMode, JavaPolicy, Preview,
 };
 use mlrc_core::instance::Instance;
 use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
+use mlrc_core::loader::forge::{self, Flavour};
 use mlrc_core::meta::manifest::VersionManifest;
 use mlrc_core::meta::rule::Env;
 use mlrc_core::meta::version::Artifact;
@@ -311,6 +313,17 @@ async fn cmd_install(
     }
 
     if dry_run {
+        // Installer-based loaders produce their file list while running, so there is
+        // nothing to preview beyond the version that would be installed.
+        if let Some(name) = loader_name.filter(|name| *name != "fabric") {
+            let flavour = Flavour::parse(name).expect("loader names are validated");
+            let installer = forge::resolve(&client, flavour, version, loader_version).await?;
+            out.human(format!("version      : {}", installer.id));
+            out.human(format!("installer    : {}", installer.url));
+            out.human("the installer runs at install time; it writes its own file list");
+            return Ok(());
+        }
+
         let preview = match loader_name {
             Some(_) => run_preview_loader(&client, &root, version, loader_version).await?,
             None => run_preview(&client, &root, version).await?,
@@ -411,15 +424,18 @@ async fn cmd_install(
     };
     sink.finish();
 
+    // A loader install produces its own id (`1.21.1-forge-52.1.20`), which is what
+    // the user has to launch and uninstall; the requested version is not enough.
+    let installed_id = state.id.clone();
     out.human(format!(
-        "installed {version}: {} files, {}",
+        "installed {installed_id}: {} files, {}",
         state.files,
         human_bytes(state.bytes)
     ));
     out.json_event(json!({
         "schema": 1,
         "event": "installed",
-        "id": version,
+        "id": installed_id,
         "files": state.files,
         "bytes": state.bytes,
         "java_major": state.java_major,
@@ -428,7 +444,7 @@ async fn cmd_install(
     Ok(())
 }
 
-const SUPPORTED_LOADERS: &[&str] = &["fabric"];
+const SUPPORTED_LOADERS: &[&str] = &["fabric", "forge", "neoforge"];
 
 /// Splits `fabric` / `fabric:0.16.9` and rejects loaders the engine does not know.
 fn parse_loader(spec: Option<&str>) -> MlrcResult<(Option<&str>, Option<&str>)> {
@@ -465,7 +481,14 @@ async fn install_once(
     sink: &ProgressSink,
 ) -> MlrcResult<InstalledState> {
     match loader {
-        Some(_) => run_install_loader(client, root, version, loader_version, options, sink).await,
+        Some("fabric") => {
+            run_install_loader(client, root, version, loader_version, options, sink).await
+        }
+        Some(name) => {
+            let flavour = Flavour::parse(name).expect("loader names are validated");
+            let installer = forge::resolve(client, flavour, version, loader_version).await?;
+            run_install_installer(client, root, version, &installer, options, sink).await
+        }
         None => run_install(client, root, version, options, sink).await,
     }
 }

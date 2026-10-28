@@ -1,7 +1,7 @@
 //! Installing one version: metadata, then bytes, then state.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
@@ -477,6 +477,297 @@ fn add_raw(
             required,
         },
     );
+}
+
+/// Installs Forge or NeoForge by running the loader's own installer.
+///
+/// Those installers patch the vanilla client with a chain of processors; reimplementing
+/// that is a project of its own. Instead the installer gets a launcher-shaped staging
+/// directory (`launcher_profiles.json`, `versions/<mc>/<mc>.{json,jar}`), and whatever
+/// it produces is adopted into the version directory.
+pub async fn install_installer(
+    client: &HttpClient,
+    root: &DataRoot,
+    mc: &str,
+    installer: &crate::loader::forge::Installer,
+    options: &InstallOptions,
+    sink: &dyn EventSink,
+) -> MlrcResult<InstalledState> {
+    root.ensure()?;
+
+    // The installer needs the vanilla client to patch.
+    let parent_complete =
+        InstalledState::read(&root.version_dir(mc).join(InstalledState::FILE_NAME))?
+            .map(|state| state.complete)
+            .unwrap_or(false);
+    if !parent_complete {
+        install(client, root, mc, options, sink).await?;
+    }
+
+    let parent = VersionJson::read_cached(root, mc)?.ok_or_else(|| {
+        MlrcError::new(
+            ErrorCode::MetaShape,
+            format!("metadata for {mc} is missing; reinstall it"),
+        )
+    })?;
+    let required = parent
+        .java_version
+        .as_ref()
+        .and_then(|java| java.major_version)
+        .unwrap_or(17);
+
+    let java = java_for_installer(root, &options.java, required)?;
+
+    let stage = root.tmp_dir().join("installer").join(&installer.id);
+    if stage.exists() {
+        std::fs::remove_dir_all(&stage)?;
+    }
+    let parent_stage = stage.join("versions").join(mc);
+    std::fs::create_dir_all(&parent_stage)?;
+    std::fs::write(stage.join("launcher_profiles.json"), b"{\"profiles\":{}}")?;
+    std::fs::copy(
+        VersionJson::cache_path(root, mc),
+        parent_stage.join(format!("{mc}.json")),
+    )?;
+    std::fs::copy(
+        root.version_dir(mc).join(format!("{mc}.jar")),
+        parent_stage.join(format!("{mc}.jar")),
+    )?;
+
+    sink.emit(Event::Phase {
+        phase: "installer".to_string(),
+        total: None,
+    });
+
+    let bytes = client.get_bytes(&installer.url).await?;
+    let installer_jar = stage.join("installer.jar");
+    std::fs::write(&installer_jar, &bytes)?;
+
+    let mut command = std::process::Command::new(&java);
+    command
+        // The installer creates temp directories; keep them inside the data tree.
+        .arg(format!("-Djava.io.tmpdir={}", root.tmp_dir().display()))
+        .arg("-jar")
+        .arg(&installer_jar)
+        .arg("--installClient")
+        .arg(&stage)
+        .current_dir(&stage);
+
+    // The installers fetch their own libraries from their maven. Point them at the
+    // mirror when one is in use, otherwise a blocked host fails the whole install.
+    if client.mirror() == crate::fetch::Mirror::Bmclapi {
+        command
+            .arg("--mirror")
+            .arg("https://bmclapi2.bangbang93.com/maven");
+    }
+
+    let output = command.output().map_err(|err| {
+        MlrcError::new(
+            ErrorCode::Io,
+            format!(
+                "cannot run the {} installer: {err}",
+                installer.flavour.as_str()
+            ),
+        )
+    })?;
+
+    // The installer's own output is the only explanation when it fails, so keep all
+    // of it on disk rather than only the last few lines in an error.
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log_path = root
+        .logs_dir()
+        .join(format!("installer-{}.log", installer.id));
+    let _ = std::fs::write(&log_path, &combined);
+
+    if !output.status.success() {
+        let lines: Vec<&str> = combined
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        let tail = lines[lines.len().saturating_sub(8)..].join(" | ");
+        return Err(MlrcError::new(
+            ErrorCode::LoaderUnavailable,
+            format!(
+                "the {} installer failed for {mc} (exit {})",
+                installer.flavour.as_str(),
+                output.status.code().unwrap_or(-1)
+            ),
+        )
+        .with("output", tail)
+        .with("log", log_path.display().to_string()));
+    }
+
+    let produced = stage
+        .join("versions")
+        .join(&installer.id)
+        .join(format!("{}.json", installer.id));
+    let produced_bytes = std::fs::read(&produced).map_err(|err| {
+        MlrcError::new(
+            ErrorCode::MetaShape,
+            format!("the installer produced no version document: {err}"),
+        )
+    })?;
+    VersionJson::store_cached(root, &installer.id, &produced_bytes)?;
+
+    let version_dir = root.version_dir(&installer.id);
+    copy_tree(&stage.join("libraries"), &version_dir.join("libraries"))?;
+
+    // The installer only fetches what its processors need. The rest of the vanilla
+    // libraries already exist in the parent version directory, so link them in
+    // rather than downloading a second copy.
+    link_tree(
+        &root.version_dir(mc).join("libraries"),
+        &version_dir.join("libraries"),
+    )?;
+
+    let staged_client = stage.join("versions").join(mc).join(format!("{mc}.jar"));
+    if staged_client.is_file() {
+        std::fs::copy(
+            &staged_client,
+            version_dir.join(format!("{}.jar", installer.id)),
+        )?;
+    }
+
+    let (files, size) = dir_stats(&version_dir)?;
+    let state = InstalledState {
+        id: installer.id.clone(),
+        complete: true,
+        java_component: parent
+            .java_version
+            .as_ref()
+            .map(|java| java.component.clone()),
+        java_major: parent
+            .java_version
+            .as_ref()
+            .and_then(|java| java.major_version),
+        files: files as u32,
+        bytes: size,
+        installed_at: now(),
+    };
+    state.write(&version_dir.join(InstalledState::FILE_NAME))?;
+    // Nothing here came through the content-addressed store, but the empty list
+    // keeps `cache prune` from refusing to run.
+    state::write_objects(&version_dir, &BTreeSet::new())?;
+
+    sink.emit(Event::Done {
+        message: format!("installed {}", installer.id),
+        ok: true,
+    });
+
+    Ok(state)
+}
+
+/// The installer only needs a working JVM; the version's own runtime is preferred but
+/// any managed one will do, since processors run on the JVM rather than the game.
+fn java_for_installer(root: &DataRoot, policy: &JavaPolicy, required: u32) -> MlrcResult<PathBuf> {
+    if let Some(installed) = discover::managed(root, required) {
+        return Ok(installed.executable);
+    }
+
+    let mut newest: Option<(u32, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(root.java_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(major) = name
+                .strip_prefix("jdk-")
+                .and_then(|rest| rest.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if let Some(installed) = discover::managed(root, major) {
+                if newest
+                    .as_ref()
+                    .map(|(best, _)| major > *best)
+                    .unwrap_or(true)
+                {
+                    newest = Some((major, installed.executable));
+                }
+            }
+        }
+    }
+    if let Some((_, executable)) = newest {
+        return Ok(executable);
+    }
+    let host = if policy.allow_host {
+        discover::host(&policy.host_path)
+    } else {
+        None
+    };
+    if let Some(host) = host {
+        return Ok(host.executable);
+    }
+
+    Err(MlrcError::new(
+        ErrorCode::JavaMissing,
+        format!(
+            "java {required} is needed to run the installer; run `mlrc java install {required}`"
+        ),
+    )
+    .with("major", required as u64))
+}
+
+fn copy_tree(from: &Path, to: &Path) -> MlrcResult<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn link_tree(from: &Path, to: &Path) -> MlrcResult<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(to)?;
+
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            link_tree(&entry.path(), &target)?;
+        } else if !target.exists() && std::fs::hard_link(entry.path(), &target).is_err() {
+            // Different volume, or a filesystem without hardlinks.
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn dir_stats(dir: &Path) -> MlrcResult<(usize, u64)> {
+    let mut files = 0usize;
+    let mut bytes = 0u64;
+
+    if !dir.is_dir() {
+        return Ok((files, bytes));
+    }
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            let (nested_files, nested_bytes) = dir_stats(&entry.path())?;
+            files += nested_files;
+            bytes += nested_bytes;
+        } else {
+            files += 1;
+            bytes += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+        }
+    }
+
+    Ok((files, bytes))
 }
 
 fn now() -> String {

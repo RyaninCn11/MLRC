@@ -4,5 +4,6 @@
 //! inherits from a vanilla version, and the existing pipeline does the rest.
 
 pub mod fabric;
+pub mod forge;
 
 pub use fabric::FabricProfile;
