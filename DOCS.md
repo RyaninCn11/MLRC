@@ -352,6 +352,18 @@ ten instances cost ten game directories rather than ten installations; only
 `data/instances/<name>/minecraft/` and a one-line `instance.toml` are new. Removing an
 instance deletes that directory and leaves every version installed.
 
+### 8.6 Game language
+
+Minecraft has no command-line switch for its language; it reads `lang:<code>` from
+`options.txt` in the game directory. `mlrc launch --lang zh_cn` rewrites that single
+line before the process starts, creating the file when it is missing and leaving every
+other setting untouched. `general.game_language` applies the same default to every
+launch, and `none` clears it.
+
+Codes are Minecraft's own lowercase identifiers (`en_us`, `zh_cn`, `pt_br`). Anything
+else is rejected as a usage error rather than written into the file, where the game
+would silently fall back and the user would not know why.
+
 ---
 
 ## 9. Version documents
@@ -419,8 +431,8 @@ releases, and a launcher that fails on the unknown is a broken launcher.
 ```
 mlrc install <version> [--loader fabric[:<version>]] [--java=auto|install|skip]
              [--yes] [--dry-run] [--threads N]
-mlrc launch [<version>] [--instance <name>] [--offline] [--username <n>]
-            [--width N] [--height N] [--dry-run] [-- <game args>]
+mlrc launch [<version>] [--instance <name>] [--lang <code>] [--offline]
+            [--username <n>] [--width N] [--height N] [--dry-run] [-- <game args>]
 mlrc list [--all] [--json]
 mlrc use <version>
 mlrc uninstall <version>

@@ -69,6 +69,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
             height,
             dry_run,
             instance,
+            lang,
             game_args,
         } => {
             cmd_launch(
@@ -81,6 +82,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
                 *height,
                 *dry_run,
                 instance.as_deref(),
+                lang.as_deref(),
                 game_args,
             )
             .await
@@ -611,6 +613,7 @@ async fn cmd_launch(
     height: Option<u32>,
     dry_run: bool,
     instance: Option<&str>,
+    lang: Option<&str>,
     game_args: &[String],
 ) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
@@ -647,6 +650,18 @@ async fn cmd_launch(
         Some(instance) => Instance::game_dir(&root, &instance.name),
         None => root.minecraft_dir(),
     };
+
+    // A flag wins over the configured default; an empty value means "leave the
+    // game's own setting alone".
+    let language = match lang {
+        Some(code) => Some(code.to_string()),
+        None => Some(cfg.general.game_language.clone()),
+    }
+    .filter(|code| !code.is_empty());
+
+    if let Some(code) = &language {
+        launch::options::validate_language(code)?;
+    }
 
     match InstalledState::read(&root.version_dir(&id).join(InstalledState::FILE_NAME))? {
         Some(state) if state.complete => {}
@@ -711,7 +726,17 @@ async fn cmd_launch(
 
     if dry_run {
         print_launch(out, &plan);
+        if let Some(code) = &language {
+            out.human(format!("game language would be set to {code}"));
+        }
         return Ok(());
+    }
+
+    // The game reads its language from options.txt, not from the command line, so
+    // this has to happen before the process starts.
+    if let Some(code) = &language {
+        launch::options::set_language(&game_dir, code)?;
+        out.human(format!("game language: {code}"));
     }
 
     out.human(format!("launching {id} as {}", identity.name));

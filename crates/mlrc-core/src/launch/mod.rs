@@ -1,6 +1,7 @@
 //! Turning an installed version plus an identity into a concrete command line.
 
 pub mod natives;
+pub mod options;
 pub mod spawn;
 pub mod template;
 

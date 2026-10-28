@@ -21,6 +21,7 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Install health checks (`mlrc doctor`)
 - [x] Fabric loader: `mlrc install <mc> --loader fabric`
 - [x] Named instances, each with its own game directory
+- [x] Set the in-game language before launch (`--lang zh_cn`)
 - [ ] Microsoft account login
 - [ ] Quilt / NeoForge loaders
 - [ ] Graphical front-end
@@ -72,12 +73,20 @@ mlrc instance create survival --version fabric-loader-0.20.1-1.21.1
 mlrc launch --instance survival
 ```
 
+Want the game itself in another language? Minecraft has no launch switch for it, so
+MLRC writes the line into `options.txt` before starting:
+
+```bash
+mlrc launch --lang zh_cn
+mlrc config set gameLanguage zh_cn      # every launch
+```
+
 ### Commands
 
 | Command | Purpose |
 |---|---|
 | `mlrc install <version>` | Install a version; `--loader fabric`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
-| `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
+| `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
@@ -101,6 +110,7 @@ path = ""           # explicit java binary
 [general]
 default_version = ""
 mirror = "auto"     # auto | official | bmclapi
+game_language = ""  # e.g. zh_cn; empty leaves the game's own setting
 ```
 
 Exit codes are stable: `0` success, `2` usage, `3` network, `4` authentication,

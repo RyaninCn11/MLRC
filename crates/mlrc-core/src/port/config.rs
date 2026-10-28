@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 4] = [
+pub const KEYS: [&str; 5] = [
     "java.custom",
     "java.path",
     "general.default_version",
     "general.mirror",
+    "general.game_language",
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -38,6 +39,9 @@ pub struct GeneralConfig {
     /// Set by `mlrc use <version>`; used by a bare `mlrc launch`.
     pub default_version: String,
     pub mirror: Mirror,
+    /// In-game language applied to `options.txt` before launch, e.g. `zh_cn`.
+    /// Empty means "leave whatever the game has".
+    pub game_language: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +108,7 @@ impl Config {
             "java.path" => self.java.path.clone(),
             "general.default_version" => self.general.default_version.clone(),
             "general.mirror" => self.general.mirror.as_str().to_string(),
+            "general.game_language" => self.general.game_language.clone(),
             other => return Err(unknown_key(other)),
         })
     }
@@ -128,6 +133,19 @@ impl Config {
                     }
                 }
             }
+            "general.game_language" => {
+                // Empty shells are awkward to pass through a CLI, so `none` is an
+                // explicit way to clear the setting.
+                let cleared = value.is_empty() || value.eq_ignore_ascii_case("none");
+                if !cleared {
+                    crate::launch::options::validate_language(value)?;
+                }
+                self.general.game_language = if cleared {
+                    String::new()
+                } else {
+                    value.to_string()
+                };
+            }
             other => return Err(unknown_key(other)),
         }
         Ok(())
@@ -143,6 +161,7 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
             "general.default_version"
         }
         "general.mirror" | "mirror" => "general.mirror",
+        "general.game_language" | "gameLanguage" | "gamelanguage" => "general.game_language",
         other => return Err(unknown_key(other)),
     })
 }

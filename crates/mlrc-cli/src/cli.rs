@@ -101,6 +101,10 @@ pub enum Command {
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
 
+        /// Language for the game, e.g. zh_cn. Written to options.txt before launch.
+        #[arg(long, value_name = "CODE")]
+        lang: Option<String>,
+
         /// Extra arguments for the game, after `--`
         #[arg(last = true)]
         game_args: Vec<String>,
