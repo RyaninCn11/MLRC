@@ -162,6 +162,20 @@ pub async fn version_by_id(http: &HttpClient, id: &str) -> MlrcResult<Version> {
     http.get_json(&format!("{BASE}/version/{id}")).await
 }
 
+#[derive(Deserialize)]
+struct Project {
+    #[serde(default)]
+    slug: String,
+}
+
+/// Slug for a project id, for labelling dependencies the user did not name.
+pub async fn project_slug(http: &HttpClient, id: &str) -> MlrcResult<String> {
+    let project: Project = http
+        .get_json_query(&format!("{BASE}/project/{id}"), &[])
+        .await?;
+    Ok(project.slug)
+}
+
 pub fn user_agent() -> &'static str {
     USER_AGENT
 }

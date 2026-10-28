@@ -1216,11 +1216,11 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = match &instance {
-                Some(instance) => Instance::game_dir(&root, &instance.name),
-                None => root.minecraft_dir(),
-            };
+            let game_dir = game_dir_for(&root, instance.as_ref());
             let dir = mods::mods_dir(&game_dir);
+
+            let manifest = mods::manifest::Manifest::load(&game_dir)?;
+            let tracked = manifest.mods.clone();
 
             let mut files: Vec<String> = Vec::new();
             if dir.is_dir() {
@@ -1237,25 +1237,163 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             }
             files.sort();
 
+            let untracked: Vec<&String> = files
+                .iter()
+                .filter(|file| !tracked.iter().any(|entry| &entry.filename == *file))
+                .collect();
+
             if out.is_json() {
-                out.json_event(
-                    json!({"schema": 1, "event": "mods", "dir": dir.display().to_string(), "files": files}),
-                );
+                let known: Vec<_> = tracked
+                    .iter()
+                    .map(|entry| {
+                        json!({
+                            "project": entry.project,
+                            "version": entry.version_number,
+                            "filename": entry.filename,
+                        })
+                    })
+                    .collect();
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "mods",
+                    "dir": dir.display().to_string(),
+                    "mods": known,
+                    "untracked": untracked,
+                }));
                 return Ok(());
             }
 
-            if files.is_empty() {
+            if tracked.is_empty() && untracked.is_empty() {
                 out.human(format!("no mods in {}", dir.display()));
                 return Ok(());
             }
-            for file in &files {
-                out.human(file.clone());
+
+            out.human(format!(" {:<24}{:<28}{}", "PROJECT", "VERSION", "FILE"));
+            for entry in &tracked {
+                out.human(format!(
+                    " {:<24}{:<28}{}",
+                    truncate(&entry.project, 23),
+                    truncate(&entry.version_number, 27),
+                    entry.filename
+                ));
             }
-            out.human(format!("{} file(s) in {}", files.len(), dir.display()));
+            for file in &untracked {
+                out.human(format!(" {:<24}{:<28}{}", "(untracked)", "-", file));
+            }
+            out.human(format!(
+                "{} tracked, {} untracked, in {}",
+                tracked.len(),
+                untracked.len(),
+                dir.display()
+            ));
+        }
+        ModCommand::Update {
+            instance,
+            version,
+            check,
+        } => {
+            let instance = load_instance(&root, instance.as_deref())?;
+            let _ = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = game_dir_for(&root, instance.as_ref());
+
+            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let outcomes = mods::update(&client, &game_dir, *check, &sink).await?;
+            sink.finish();
+
+            if outcomes.is_empty() {
+                out.human("no mods recorded; install some with `mlrc mod install`");
+                return Ok(());
+            }
+
+            let mut updated = 0usize;
+            let mut bytes = 0u64;
+            for outcome in &outcomes {
+                match &outcome.to_version {
+                    Some(to) if *check => out.human(format!(
+                        "{}: {} -> {} available",
+                        outcome.project, outcome.from_version, to
+                    )),
+                    Some(to) => {
+                        updated += 1;
+                        bytes += outcome.bytes;
+                        out.human(format!(
+                            "{}: {} -> {}",
+                            outcome.project, outcome.from_version, to
+                        ));
+                    }
+                    None => out.human(format!(
+                        "{}: up to date ({})",
+                        outcome.project, outcome.from_version
+                    )),
+                }
+            }
+
+            out.human(format!(
+                "{} mod(s) checked, {updated} {}, {} downloaded",
+                outcomes.len(),
+                if *check { "outdated" } else { "updated" },
+                human_bytes(bytes)
+            ));
+            out.json_event(json!({
+                "schema": 1,
+                "event": "mods_updated",
+                "checked": outcomes.len(),
+                "updated": updated,
+                "bytes": bytes,
+                "check_only": check,
+            }));
+        }
+        ModCommand::Remove {
+            mods: names,
+            instance,
+            version,
+        } => {
+            let instance = load_instance(&root, instance.as_deref())?;
+            let _ = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = game_dir_for(&root, instance.as_ref());
+
+            if names.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no mod given; run `mlrc mod remove sodium`",
+                ));
+            }
+
+            let removed = mods::remove(&game_dir, names)?;
+            for item in &removed {
+                out.human(format!("removed {} ({})", item.project, item.filename));
+            }
+            let files: Vec<&str> = removed.iter().map(|item| item.filename.as_str()).collect();
+            out.json_event(json!({
+                "schema": 1,
+                "event": "mods_removed",
+                "files": files,
+            }));
         }
     }
 
     Ok(())
+}
+
+fn game_dir_for(root: &DataRoot, instance: Option<&Instance>) -> std::path::PathBuf {
+    match instance {
+        Some(instance) => Instance::game_dir(root, &instance.name),
+        None => root.minecraft_dir(),
+    }
 }
 
 /// Resolves the loader and Minecraft version to search or install against.

@@ -237,6 +237,24 @@ pub enum ModCommand {
         #[arg(long)]
         version: Option<String>,
     },
+    /// Replace installed mods with newer versions from Modrinth
+    Update {
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+        /// Report what would change without downloading anything
+        #[arg(long)]
+        check: bool,
+    },
+    /// Remove mods by slug, project id or file name
+    Remove {
+        mods: Vec<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

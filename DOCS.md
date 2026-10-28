@@ -472,6 +472,8 @@ mlrc instance create <name> --version <id> [--memory <size>] | list | remove <na
 mlrc mod search <query> [--mc <ver>] [--loader <name>] [--instance <n>] [--limit N]
 mlrc mod install <project...> [--instance <n>] [--version <id>]
 mlrc mod list [--instance <n>] [--version <id>]
+mlrc mod update [--check] [--instance <n>] [--version <id>]
+mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list
@@ -542,6 +544,14 @@ including in `-v` logs and `--dry-run` command lines.
 - Files go into `<game dir>/mods/`, are written through a `.part` sibling and are
   checked against Modrinth's SHA1. A file that is already there is left alone, which
   is what makes a second `mod install` a no-op rather than a re-download.
+- What was installed is recorded in `mods/.mlrc-mods.json`: project slug and id,
+  version, file name, and the platform it was resolved for. Modrinth puts no project
+  identity inside the jar, so nothing else could answer "which project is this?" later.
+- `mod update` re-resolves every recorded project against the recorded platform,
+  replaces outdated jars (write, swap, delete the old name) and reports the rest as up
+  to date. `--check` stops before downloading.
+- `mod remove` accepts a slug, a project id or a file name, and also removes jars the
+  manifest never saw. An unknown name is `E_MOD_NOT_FOUND`.
 
 ---
 

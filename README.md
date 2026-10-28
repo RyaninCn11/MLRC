@@ -108,6 +108,8 @@ you point at; required dependencies are installed with them:
 mlrc mod search sodium --instance big
 mlrc mod install iris --instance big      # also installs Sodium
 mlrc mod list --instance big
+mlrc mod update --instance big --check    # what is out of date
+mlrc mod remove lithium --instance big
 ```
 
 ### Commands
@@ -120,7 +122,7 @@ mlrc mod list --instance big
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
-| `mlrc mod search \| install \| list` | Mods from Modrinth, filtered by the version's loader and Minecraft version |
+| `mlrc mod search \| install \| list \| update \| remove` | Mods from Modrinth, filtered by the version's loader and Minecraft version; installs bring their required dependencies |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |

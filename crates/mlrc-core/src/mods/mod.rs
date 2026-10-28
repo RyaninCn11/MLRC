@@ -1,5 +1,6 @@
 //! Mods: which loader an installed version runs, and installing jars into `mods/`.
 
+pub mod manifest;
 pub mod modrinth;
 
 use std::collections::BTreeSet;
@@ -10,6 +11,8 @@ use crate::events::{Event, EventSink};
 use crate::fetch::HttpClient;
 use crate::meta::version::VersionJson;
 use crate::port::DataRoot;
+
+use manifest::{Entry, Manifest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Platform {
@@ -103,6 +106,15 @@ pub async fn install(
     let dir = mods_dir(game_dir);
     std::fs::create_dir_all(&dir)?;
 
+    let mut manifest = Manifest::load(game_dir)?;
+    manifest.minecraft = platform.mc.clone();
+    manifest.loader = platform.loader.clone();
+
+    let root_id = versions
+        .first()
+        .map(|version| version.project_id.clone())
+        .unwrap_or_default();
+
     let mut installed = Vec::new();
     for version in versions {
         let file = version.primary_file()?.clone();
@@ -115,6 +127,15 @@ pub async fn install(
                 bytes: 0,
                 already_present: true,
             });
+            record(
+                http,
+                &mut manifest,
+                project,
+                &root_id,
+                &version,
+                &file.filename,
+            )
+            .await;
             continue;
         }
 
@@ -153,9 +174,228 @@ pub async fn install(
             bytes: bytes.len() as u64,
             already_present: false,
         });
+        record(
+            http,
+            &mut manifest,
+            project,
+            &root_id,
+            &version,
+            &file.filename,
+        )
+        .await;
     }
 
+    manifest.save(game_dir)?;
+
     Ok(installed)
+}
+
+/// Remembers where a jar came from, so `mod update` and `mod remove` can find it.
+///
+/// The project the user asked for keeps its own name; a dependency is labelled with
+/// its slug, fetched once, because its version document only carries an id.
+async fn record(
+    http: &HttpClient,
+    manifest: &mut Manifest,
+    requested: &str,
+    root_id: &str,
+    version: &modrinth::Version,
+    filename: &str,
+) {
+    let project = if version.project_id == root_id {
+        requested.to_string()
+    } else if let Some(existing) = manifest
+        .mods
+        .iter()
+        .find(|entry| entry.project_id == version.project_id)
+    {
+        existing.project.clone()
+    } else {
+        modrinth::project_slug(http, &version.project_id)
+            .await
+            .unwrap_or_else(|_| version.project_id.clone())
+    };
+
+    manifest.upsert(Entry {
+        project,
+        project_id: version.project_id.clone(),
+        name: version.name.clone(),
+        version_id: version.id.clone(),
+        version_number: version.version_number.clone(),
+        filename: filename.to_string(),
+        sha1: String::new(),
+    });
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateOutcome {
+    pub project: String,
+    pub name: String,
+    pub from_version: String,
+    /// `None` means the installed version is already the newest one.
+    pub to_version: Option<String>,
+    pub filename: Option<String>,
+    pub bytes: u64,
+}
+
+/// Re-resolves every recorded mod against its project and replaces outdated files.
+pub async fn update(
+    http: &HttpClient,
+    game_dir: &Path,
+    check_only: bool,
+    sink: &dyn EventSink,
+) -> MlrcResult<Vec<UpdateOutcome>> {
+    let mut manifest = Manifest::load(game_dir)?;
+    if manifest.mods.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let dir = mods_dir(game_dir);
+    std::fs::create_dir_all(&dir)?;
+
+    let mut outcomes = Vec::new();
+    for entry in manifest.mods.clone() {
+        let latest = modrinth::version_for(
+            http,
+            &entry.project_id,
+            &manifest.minecraft,
+            &manifest.loader,
+        )
+        .await?;
+
+        if latest.id == entry.version_id {
+            outcomes.push(UpdateOutcome {
+                project: entry.project,
+                name: entry.name,
+                from_version: entry.version_number,
+                to_version: None,
+                filename: None,
+                bytes: 0,
+            });
+            continue;
+        }
+
+        let file = latest.primary_file()?.clone();
+
+        if check_only {
+            outcomes.push(UpdateOutcome {
+                project: entry.project,
+                name: entry.name,
+                from_version: entry.version_number,
+                to_version: Some(latest.version_number.clone()),
+                filename: Some(file.filename.clone()),
+                bytes: 0,
+            });
+            continue;
+        }
+
+        sink.emit(Event::FileStarted {
+            path: file.filename.clone(),
+            total_bytes: None,
+        });
+
+        let bytes = http.get_bytes(&file.url).await?;
+        if !file.hashes.sha1.is_empty() {
+            let actual = sha1_of(&bytes);
+            if actual != file.hashes.sha1 {
+                return Err(MlrcError::new(
+                    ErrorCode::HashMismatch,
+                    format!("hash mismatch for {}", file.filename),
+                )
+                .with("expected", file.hashes.sha1.clone())
+                .with("actual", actual));
+            }
+        }
+
+        // Replace in one step: write beside, then swap, then drop the old name.
+        let target = dir.join(&file.filename);
+        let part = target.with_extension("jar.part");
+        std::fs::write(&part, &bytes)?;
+        std::fs::rename(&part, &target)?;
+
+        let old = dir.join(&entry.filename);
+        if old != target && old.is_file() {
+            let _ = std::fs::remove_file(&old);
+        }
+
+        sink.emit(Event::FileFinished {
+            path: file.filename.clone(),
+            ok: true,
+            cached: false,
+        });
+
+        manifest.upsert(Entry {
+            project: entry.project.clone(),
+            project_id: entry.project_id.clone(),
+            name: latest.name.clone(),
+            version_id: latest.id.clone(),
+            version_number: latest.version_number.clone(),
+            filename: file.filename.clone(),
+            sha1: String::new(),
+        });
+
+        outcomes.push(UpdateOutcome {
+            project: entry.project,
+            name: latest.name,
+            from_version: entry.version_number,
+            to_version: Some(latest.version_number),
+            filename: Some(file.filename),
+            bytes: bytes.len() as u64,
+        });
+    }
+
+    if !check_only {
+        manifest.save(game_dir)?;
+    }
+
+    Ok(outcomes)
+}
+
+#[derive(Debug, Clone)]
+pub struct RemovedMod {
+    pub project: String,
+    pub filename: String,
+}
+
+pub fn remove(game_dir: &Path, needles: &[String]) -> MlrcResult<Vec<RemovedMod>> {
+    let mut manifest = Manifest::load(game_dir)?;
+    let dir = mods_dir(game_dir);
+    let mut removed = Vec::new();
+
+    for needle in needles {
+        if let Some(entry) = manifest.find(needle).cloned() {
+            let file = dir.join(&entry.filename);
+            if file.is_file() {
+                std::fs::remove_file(&file)?;
+            }
+            manifest.remove_project(&entry.project_id);
+            removed.push(RemovedMod {
+                project: entry.project,
+                filename: entry.filename,
+            });
+            continue;
+        }
+
+        // A jar the manifest does not know about, dropped in by hand.
+        let file = dir.join(needle);
+        if file.is_file() {
+            std::fs::remove_file(&file)?;
+            removed.push(RemovedMod {
+                project: needle.clone(),
+                filename: needle.clone(),
+            });
+            continue;
+        }
+
+        return Err(MlrcError::new(
+            ErrorCode::ModNotFound,
+            format!("no installed mod matches {needle}"),
+        )
+        .with("name", needle.clone()));
+    }
+
+    manifest.save(game_dir)?;
+    Ok(removed)
 }
 
 /// Depth-first over required dependencies, de-duplicated by project.
