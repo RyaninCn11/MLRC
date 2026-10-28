@@ -49,6 +49,9 @@ pub fn error(out: &Out, err: &MlrcError) {
         }));
     } else {
         eprintln!("error [{}]: {}", err.code.as_str(), err.message);
+        if let Some(hint) = err.context.get("hint").and_then(|value| value.as_str()) {
+            eprintln!("  hint: {hint}");
+        }
         if !err.context.is_null() {
             eprintln!("  context: {}", err.context);
         }

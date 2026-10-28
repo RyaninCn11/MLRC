@@ -147,8 +147,22 @@ impl DataRoot {
         } else {
             ErrorCode::Io
         };
-        MlrcError::new(code, format!("cannot write {}: {err}", path.display()))
-            .with("path", path.display().to_string())
+
+        let mut error = MlrcError::new(code, format!("cannot write {}: {err}", path.display()))
+            .with("path", path.display().to_string());
+
+        // The usual causes are not "the disk is full": a folder copied out of an
+        // archive, a security product blocking an unsigned binary, or a read-only
+        // share. Say what to try instead of leaving the user with errno 5.
+        if err.kind() == std::io::ErrorKind::PermissionDenied {
+            error = error.with(
+                "hint",
+                "the folder is not writable by this process; move the launcher to a \
+                 folder you own, pass --data-dir, or allow it in your security software",
+            );
+        }
+
+        error
     }
 }
 
