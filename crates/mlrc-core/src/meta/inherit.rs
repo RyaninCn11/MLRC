@@ -35,6 +35,10 @@ pub fn merge(child: &VersionJson, parent: &VersionJson) -> VersionJson {
     merged.arguments = merge_arguments(child.arguments.as_ref(), parent.arguments.as_ref());
     merged.libraries = merge_libraries(&child.libraries, &parent.libraries);
 
+    // The merged document now stands in for the parent, so it points at whatever
+    // the parent pointed at - not at the parent itself, which would loop forever.
+    merged.inherits_from = parent.inherits_from.clone();
+
     merged
 }
 

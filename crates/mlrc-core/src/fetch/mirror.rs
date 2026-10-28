@@ -14,6 +14,8 @@
 //! | `launchermeta.mojang.com` | `bmclapi2.bangbang93.com` |
 //! | `libraries.minecraft.net` | `bmclapi2.bangbang93.com/maven` |
 //! | `resources.download.minecraft.net` | `bmclapi2.bangbang93.com/assets` |
+//! | `meta.fabricmc.net` | `bmclapi2.bangbang93.com/fabric-meta` |
+//! | `maven.fabricmc.net` | `bmclapi2.bangbang93.com/maven` |
 
 use std::time::{Duration, Instant};
 
@@ -29,7 +31,7 @@ pub enum Mirror {
     Bmclapi,
 }
 
-const REPLACEMENTS: [(&str, &str); 6] = [
+const REPLACEMENTS: [(&str, &str); 8] = [
     ("https://piston-meta.mojang.com", BMCLAPI_BASE),
     ("https://piston-data.mojang.com", BMCLAPI_BASE),
     ("https://launchermeta.mojang.com", BMCLAPI_BASE),
@@ -41,6 +43,14 @@ const REPLACEMENTS: [(&str, &str); 6] = [
     (
         "https://resources.download.minecraft.net",
         "https://bmclapi2.bangbang93.com/assets",
+    ),
+    (
+        "https://meta.fabricmc.net",
+        "https://bmclapi2.bangbang93.com/fabric-meta",
+    ),
+    (
+        "https://maven.fabricmc.net",
+        "https://bmclapi2.bangbang93.com/maven",
     ),
 ];
 
@@ -165,8 +175,20 @@ mod tests {
     }
 
     #[test]
+    fn fabric_hosts_are_mirrored() {
+        assert_eq!(
+            Mirror::Bmclapi.rewrite("https://meta.fabricmc.net/v2/versions/loader/1.21.1"),
+            "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/1.21.1"
+        );
+        assert_eq!(
+            Mirror::Bmclapi.rewrite("https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.16.9/fabric-loader-0.16.9.jar"),
+            "https://bmclapi2.bangbang93.com/maven/net/fabricmc/fabric-loader/0.16.9/fabric-loader-0.16.9.jar"
+        );
+    }
+
+    #[test]
     fn unknown_hosts_pass_through() {
-        let url = "https://meta.fabricmc.net/v2/versions/loader/1.21.1";
+        let url = "https://api.minecraftservices.com/minecraft/profile";
         assert_eq!(Mirror::Bmclapi.rewrite(url), url);
     }
 }

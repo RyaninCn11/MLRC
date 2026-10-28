@@ -301,6 +301,8 @@ bits are applied on Unix.
 - Documents without `arguments.game` fall back to `minecraftArguments`, split on
   whitespace.
 - A missing `-Xmx` gets a `-Xmx2G` default.
+- `-Djava.io.tmpdir` points at `data/tmp`: loader remapping and image caches then stay
+  inside the portable tree instead of the system temp directory.
 - Variables are `${name}` placeholders; unknown ones are left visible rather than
   silently emptied.
 
@@ -353,7 +355,34 @@ for the majority of libraries.
   newer ASM keeps its jar ahead of the vanilla one on the classpath
 - `downloads`: field-level merge, child wins
 
-### 9.3 Model
+Merging rewrites the pointer: the merged document inherits from whatever the parent
+inherited from, never from the parent itself, or resolution would never terminate.
+
+### 9.3 Libraries without a `downloads` block
+
+Loader documents often publish Maven coordinates instead of artifacts:
+
+```json
+{"name": "net.fabricmc:fabric-loader:0.20.1", "url": "https://maven.fabricmc.net/"}
+```
+
+Both forms collapse into the same artifact: the coordinate becomes a repository path
+(`group/artifact/version/artifact-version[-classifier].jar`) appended to the base URL.
+Some of these carry no hash at all; those skip the content-addressed store and are
+written straight to their destination, still retried, just unverified.
+
+### 9.4 Loaders
+
+A loader is not a separate install format. `mlrc install <mc> --loader fabric` resolves
+a profile from the loader's meta API, caches it under the id the loader chose
+(`fabric-loader-<loader>-<mc>`), and runs the normal pipeline: the profile's
+`inheritsFrom` pulls in the vanilla client, libraries and assets, and its own libraries
+are prepended to the classpath.
+
+Launch resolves the same chain from cached documents, so a loader install starts
+without network access.
+
+### 9.5 Model
 
 Every field defaults and unknown fields are ignored: Mojang adds fields between
 releases, and a launcher that fails on the unknown is a broken launcher.

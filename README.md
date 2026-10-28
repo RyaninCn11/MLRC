@@ -19,8 +19,9 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Launch the game offline with a derived player identity
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
+- [x] Fabric loader: `mlrc install <mc> --loader fabric`
 - [ ] Microsoft account login
-- [ ] Fabric / Quilt / NeoForge loaders
+- [ ] Quilt / NeoForge loaders
 - [ ] Per-instance game directories
 - [ ] Graphical front-end
 

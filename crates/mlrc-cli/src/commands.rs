@@ -13,14 +13,16 @@ use mlrc_core::error::{ErrorCode, MlrcError, MlrcResult};
 use mlrc_core::fetch::mirror::{self, Mirror};
 use mlrc_core::fetch::HttpClient;
 use mlrc_core::install::{
-    install as run_install, InstallOptions, JavaMode as CoreJavaMode, JavaPolicy,
+    install as run_install, install_loader as run_install_loader, preview as run_preview,
+    preview_loader as run_preview_loader, resolve_document as run_resolve_document, InstallOptions,
+    JavaMode as CoreJavaMode, JavaPolicy, Preview,
 };
 use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
-use mlrc_core::meta::manifest::{VersionEntry, VersionManifest};
+use mlrc_core::meta::manifest::VersionManifest;
 use mlrc_core::meta::rule::Env;
-use mlrc_core::meta::version::{Artifact, VersionJson};
-use mlrc_core::plan::install::{self, InstallPlan};
+use mlrc_core::meta::version::Artifact;
+use mlrc_core::plan::install;
 use mlrc_core::port::config::{self, Config, KEYS as CONFIG_KEYS};
 use mlrc_core::port::state::{self, InstalledState};
 use mlrc_core::port::DataRoot;
@@ -43,7 +45,20 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
             threads,
             java,
             yes,
-        } => cmd_install(cli, out, version, *dry_run, *threads, *java, *yes).await,
+            loader,
+        } => {
+            cmd_install(
+                cli,
+                out,
+                version,
+                *dry_run,
+                *threads,
+                *java,
+                *yes,
+                loader.as_deref(),
+            )
+            .await
+        }
         Command::Launch {
             version,
             offline,
@@ -266,6 +281,7 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cmd_install(
     cli: &Cli,
     out: &Out,
@@ -274,30 +290,25 @@ async fn cmd_install(
     threads: usize,
     java_mode: CliJavaMode,
     yes: bool,
+    loader: Option<&str>,
 ) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     root.ensure()?;
     let (client, source) = open_client(cli, &root).await?;
     announce_source(out, source);
 
-    out.human(format!("resolving {version} ..."));
-    let manifest = VersionManifest::load(&client, &root).await?;
-    let entry = manifest
-        .find(version)
-        .ok_or_else(|| {
-            MlrcError::new(
-                ErrorCode::VersionUnknown,
-                format!("unknown version: {version}"),
-            )
-            .with("id", version)
-        })?
-        .clone();
-
-    let document = VersionJson::load(&client, &root, version, &entry.url).await?;
-    let plan = install::build(&document, &Env::detect())?;
+    let (loader_name, loader_version) = parse_loader(loader)?;
+    match loader_name {
+        Some(name) => out.human(format!("resolving {version} with {name} ...")),
+        None => out.human(format!("resolving {version} ...")),
+    }
 
     if dry_run {
-        print_plan(out, &entry, &plan, &root);
+        let preview = match loader_name {
+            Some(_) => run_preview_loader(&client, &root, version, loader_version).await?,
+            None => run_preview(&client, &root, version).await?,
+        };
+        print_plan(out, &preview, &root);
         return Ok(());
     }
 
@@ -319,10 +330,12 @@ async fn cmd_install(
     let live = !cli.json && !cli.quiet;
     let sink = ProgressSink::new(live);
 
-    let state = match run_install(
+    let state = match install_once(
         &client,
         &root,
         version,
+        loader_name,
+        loader_version,
         &InstallOptions {
             threads,
             java: policy.clone(),
@@ -370,10 +383,12 @@ async fn cmd_install(
                 return Err(err);
             }
 
-            run_install(
+            install_once(
                 &client,
                 &root,
                 version,
+                loader_name,
+                loader_version,
                 &InstallOptions {
                     threads,
                     java: JavaPolicy {
@@ -406,7 +421,50 @@ async fn cmd_install(
     Ok(())
 }
 
-fn print_plan(out: &Out, entry: &VersionEntry, plan: &InstallPlan, root: &DataRoot) {
+const SUPPORTED_LOADERS: &[&str] = &["fabric"];
+
+/// Splits `fabric` / `fabric:0.16.9` and rejects loaders the engine does not know.
+fn parse_loader(spec: Option<&str>) -> MlrcResult<(Option<&str>, Option<&str>)> {
+    let Some(spec) = spec else {
+        return Ok((None, None));
+    };
+
+    let (name, version) = match spec.split_once(':') {
+        Some((name, version)) => (name, Some(version)),
+        None => (spec, None),
+    };
+
+    if !SUPPORTED_LOADERS.contains(&name) {
+        return Err(MlrcError::new(
+            ErrorCode::LoaderUnavailable,
+            format!(
+                "unsupported loader: {name} (supported: {})",
+                SUPPORTED_LOADERS.join(", ")
+            ),
+        )
+        .with("loader", name.to_string()));
+    }
+
+    Ok((Some(name), version))
+}
+
+async fn install_once(
+    client: &HttpClient,
+    root: &DataRoot,
+    version: &str,
+    loader: Option<&str>,
+    loader_version: Option<&str>,
+    options: &InstallOptions,
+    sink: &ProgressSink,
+) -> MlrcResult<InstalledState> {
+    match loader {
+        Some(_) => run_install_loader(client, root, version, loader_version, options, sink).await,
+        None => run_install(client, root, version, options, sink).await,
+    }
+}
+
+fn print_plan(out: &Out, preview: &Preview, root: &DataRoot) {
+    let plan = &preview.plan;
     let java_installed = plan
         .java
         .as_ref()
@@ -415,7 +473,7 @@ fn print_plan(out: &Out, entry: &VersionEntry, plan: &InstallPlan, root: &DataRo
 
     out.human(format!(
         "version      : {} ({}, {})",
-        plan.id, entry.kind, entry.release_time
+        preview.id, preview.kind, preview.release_time
     ));
     out.human(format!("main class   : {}", plan.main_class));
 
@@ -466,7 +524,7 @@ fn print_plan(out: &Out, entry: &VersionEntry, plan: &InstallPlan, root: &DataRo
     out.json_event(json!({
         "schema": 1,
         "event": "plan",
-        "id": plan.id,
+        "id": preview.id,
         "java": plan.java.as_ref().map(|java| json!({
             "component": java.component,
             "major": java.major,
@@ -553,6 +611,10 @@ async fn cmd_launch(
     root.ensure()?;
     let cfg = Config::load(&root.config_path())?;
 
+    // No probing here: launch must work without touching the network.
+    let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
+    let client = HttpClient::new(mirror)?;
+
     let id = match version {
         Some(id) => id.to_string(),
         None if !cfg.general.default_version.is_empty() => cfg.general.default_version.clone(),
@@ -580,12 +642,9 @@ async fn cmd_launch(
         }
     }
 
-    let document = VersionJson::read_cached(&root, &id)?.ok_or_else(|| {
-        MlrcError::new(
-            ErrorCode::MetaShape,
-            format!("metadata for {id} is missing; reinstall it"),
-        )
-    })?;
+    // Loader versions inherit from vanilla; resolve that before reading javaVersion.
+    // Only cached documents are needed after an install, so this works offline.
+    let document = run_resolve_document(&client, &root, &id).await?;
 
     let required = document
         .java_version

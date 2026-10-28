@@ -114,6 +114,49 @@ pub struct Library {
     pub natives: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub extract: Option<Extract>,
+    /// Maven base URL, used by libraries that publish coordinates instead of a
+    /// `downloads` block (Fabric's loader libraries, among others).
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub sha1: String,
+    #[serde(default)]
+    pub size: u64,
+}
+
+impl Library {
+    /// Converts a Maven coordinate plus base URL into the same shape as a
+    /// `downloads.artifact`, so the rest of the pipeline does not care which form a
+    /// document used.
+    pub fn maven_artifact(&self) -> Option<Artifact> {
+        let base = self.url.as_deref()?;
+        let path = maven_path(&self.name)?;
+        Some(Artifact {
+            url: format!("{base}{path}"),
+            path,
+            sha1: self.sha1.clone(),
+            size: self.size,
+        })
+    }
+}
+
+/// `group:artifact:version[:classifier]` -> a repository path.
+fn maven_path(coordinate: &str) -> Option<String> {
+    let mut parts = coordinate.split(':');
+    let group = parts.next()?;
+    let artifact = parts.next()?;
+    let version = parts.next()?;
+    let classifier = parts.next();
+
+    let file = match classifier {
+        Some(classifier) => format!("{artifact}-{version}-{classifier}.jar"),
+        None => format!("{artifact}-{version}.jar"),
+    };
+
+    Some(format!(
+        "{}/{artifact}/{version}/{file}",
+        group.replace('.', "/")
+    ))
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -273,6 +316,21 @@ impl VersionJson {
 
         Ok(version)
     }
+
+    /// Stores a document that did not come from Mojang (a loader profile), so that
+    /// launch can later find it in the same place as a vanilla document.
+    pub fn store_cached(root: &DataRoot, id: &str, bytes: &[u8]) -> MlrcResult<()> {
+        let path = Self::cache_path(root, id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, bytes).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot write {}: {err}", path.display()),
+            )
+        })
+    }
 }
 
 #[cfg(test)]
@@ -309,5 +367,34 @@ mod tests {
         let json = r#"{"id":"1.0","mainClass":"a.B","somethingNew":{"x":1},"libraries":[]}"#;
         let version: VersionJson = serde_json::from_str(json).expect("parses");
         assert_eq!(version.main_class, "a.B");
+    }
+
+    #[test]
+    fn maven_coordinates_become_repository_paths() {
+        assert_eq!(
+            maven_path("net.fabricmc:fabric-loader:0.20.1").as_deref(),
+            Some("net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar")
+        );
+        assert_eq!(
+            maven_path("org.lwjgl:lwjgl:3.3.1:natives-windows").as_deref(),
+            Some("org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1-natives-windows.jar")
+        );
+        assert_eq!(maven_path("broken"), None);
+    }
+
+    #[test]
+    fn loader_libraries_without_downloads_get_an_artifact() {
+        let json = r#"{"name":"net.fabricmc:fabric-loader:0.20.1",
+            "url":"https://maven.fabricmc.net/",
+            "sha1":"abc123","size":42}"#;
+        let library: Library = serde_json::from_str(json).expect("library parses");
+
+        let artifact = library.maven_artifact().expect("artifact");
+        assert_eq!(
+            artifact.url,
+            "https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar"
+        );
+        assert_eq!(artifact.sha1, "abc123");
+        assert_eq!(artifact.size, 42);
     }
 }

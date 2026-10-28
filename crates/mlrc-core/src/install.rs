@@ -86,7 +86,50 @@ pub async fn install(
         .clone();
 
     let version = VersionJson::load(client, root, id, &entry.url).await?;
-    let document = resolve_inheritance(client, root, &manifest, version).await?;
+
+    install_prepared(client, root, &manifest, id, version, options, sink).await
+}
+
+/// Installs a loader version: a document that inherits from a vanilla one.
+///
+/// The profile is cached under its own id (`fabric-loader-<loader>-<mc>`), so launch
+/// finds it exactly where a vanilla document would be.
+pub async fn install_loader(
+    client: &HttpClient,
+    root: &DataRoot,
+    mc: &str,
+    loader_version: Option<&str>,
+    options: &InstallOptions,
+    sink: &dyn EventSink,
+) -> MlrcResult<InstalledState> {
+    root.ensure()?;
+
+    let manifest = VersionManifest::load(client, root).await?;
+    let profile = crate::loader::fabric::resolve(client, mc, loader_version).await?;
+    VersionJson::store_cached(root, &profile.id, &profile.document)?;
+
+    install_prepared(
+        client,
+        root,
+        &manifest,
+        &profile.id,
+        profile.version,
+        options,
+        sink,
+    )
+    .await
+}
+
+async fn install_prepared(
+    client: &HttpClient,
+    root: &DataRoot,
+    manifest: &VersionManifest,
+    id: &str,
+    version: VersionJson,
+    options: &InstallOptions,
+    sink: &dyn EventSink,
+) -> MlrcResult<InstalledState> {
+    let document = resolve_inheritance(client, root, manifest, version).await?;
 
     let env = Env::detect();
     let plan = plan::build(&document, &env)?;
@@ -249,6 +292,101 @@ pub async fn install(
     Ok(state)
 }
 
+/// What an install would do, without doing any of it.
+pub struct Preview {
+    pub id: String,
+    pub kind: String,
+    pub release_time: String,
+    pub plan: plan::InstallPlan,
+}
+
+pub async fn preview(client: &HttpClient, root: &DataRoot, id: &str) -> MlrcResult<Preview> {
+    root.ensure()?;
+    let manifest = VersionManifest::load(client, root).await?;
+    let entry = manifest
+        .find(id)
+        .ok_or_else(|| {
+            MlrcError::new(ErrorCode::VersionUnknown, format!("unknown version: {id}"))
+                .with("id", id)
+        })?
+        .clone();
+
+    let version = VersionJson::load(client, root, id, &entry.url).await?;
+    let document = resolve_inheritance(client, root, &manifest, version).await?;
+    make_preview(document)
+}
+
+pub async fn preview_loader(
+    client: &HttpClient,
+    root: &DataRoot,
+    mc: &str,
+    loader_version: Option<&str>,
+) -> MlrcResult<Preview> {
+    root.ensure()?;
+    let manifest = VersionManifest::load(client, root).await?;
+    let profile = crate::loader::fabric::resolve(client, mc, loader_version).await?;
+    let document = resolve_inheritance(client, root, &manifest, profile.version).await?;
+    make_preview(document)
+}
+
+fn make_preview(document: VersionJson) -> MlrcResult<Preview> {
+    let plan = plan::build(&document, &Env::detect())?;
+    Ok(Preview {
+        id: document.id.clone(),
+        kind: document.kind.clone(),
+        release_time: document.release_time.clone(),
+        plan,
+    })
+}
+
+/// Loads a document and resolves its parents, preferring cached copies.
+///
+/// Launch uses this: after an install, both the loader profile and its vanilla
+/// parent are cached, so resolution needs no network at all.
+pub async fn resolve_document(
+    client: &HttpClient,
+    root: &DataRoot,
+    id: &str,
+) -> MlrcResult<VersionJson> {
+    let mut document = VersionJson::read_cached(root, id)?.ok_or_else(|| {
+        MlrcError::new(
+            ErrorCode::MetaShape,
+            format!("metadata for {id} is missing; reinstall it"),
+        )
+        .with("id", id)
+    })?;
+
+    let mut depth = 0;
+    while let Some(parent_id) = document.inherits_from.clone() {
+        depth += 1;
+        if depth > 8 {
+            return Err(MlrcError::new(
+                ErrorCode::MetaShape,
+                format!("inheritance chain too deep at {id}"),
+            ));
+        }
+
+        let parent = match VersionJson::read_cached(root, &parent_id)? {
+            Some(cached) => cached,
+            None => {
+                let manifest = VersionManifest::load(client, root).await?;
+                let entry = manifest.find(&parent_id).ok_or_else(|| {
+                    MlrcError::new(
+                        ErrorCode::VersionUnknown,
+                        format!("parent version {parent_id} is not in the manifest"),
+                    )
+                    .with("id", parent_id.clone())
+                })?;
+                VersionJson::load(client, root, &parent_id, &entry.url).await?
+            }
+        };
+
+        document = inherit::merge(&document, &parent);
+    }
+
+    Ok(document)
+}
+
 async fn resolve_inheritance(
     client: &HttpClient,
     root: &DataRoot,
@@ -314,17 +452,23 @@ fn add_raw(
     dest: PathBuf,
     required: bool,
 ) {
-    if sha1.is_empty() {
-        return;
-    }
-    if let Some(task) = groups.get_mut(sha1) {
+    // Loader libraries may publish coordinates without a hash; those are keyed by URL
+    // so they are still deduplicated within one install.
+    let key = if sha1.is_empty() {
+        url.to_string()
+    } else {
+        sha1.to_string()
+    };
+
+    if let Some(task) = groups.get_mut(&key) {
         if !task.dests.contains(&dest) {
             task.dests.push(dest);
         }
         return;
     }
+
     groups.insert(
-        sha1.to_string(),
+        key,
         DownloadTask {
             sha1: sha1.to_string(),
             url: url.to_string(),

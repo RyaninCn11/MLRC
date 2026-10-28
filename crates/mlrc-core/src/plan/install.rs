@@ -72,8 +72,15 @@ pub fn build(version: &VersionJson, env: &Env) -> MlrcResult<InstallPlan> {
             }
         }
 
-        if let Some(artifact) = &library.downloads.artifact {
-            plan.libraries.push(artifact.clone());
+        // Most documents ship a `downloads` block; loaders often ship Maven
+        // coordinates instead. Both end up as the same artifact.
+        let artifact = library
+            .downloads
+            .artifact
+            .clone()
+            .or_else(|| library.maven_artifact());
+        if let Some(artifact) = artifact {
+            plan.libraries.push(artifact);
         }
     }
 

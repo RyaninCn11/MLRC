@@ -152,6 +152,18 @@ pub fn build(
 
     jvm.extend(options.jvm_args.iter().cloned());
 
+    // Some loaders write remapped jars and image caches through `java.io.tmpdir`.
+    // Redirect it into the data directory: portable, and immune to a locked-down
+    // system temp directory.
+    let tmp_dir = root.tmp_dir();
+    std::fs::create_dir_all(&tmp_dir)?;
+    if !jvm
+        .iter()
+        .any(|argument| argument.starts_with("-Djava.io.tmpdir"))
+    {
+        jvm.insert(0, format!("-Djava.io.tmpdir={}", tmp_dir.display()));
+    }
+
     if !jvm.iter().any(|argument| argument.starts_with("-Xmx")) {
         jvm.insert(0, "-Xmx2G".to_string());
     }

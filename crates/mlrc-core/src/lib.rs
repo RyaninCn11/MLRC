@@ -17,6 +17,7 @@ pub mod fetch;
 pub mod install;
 pub mod java;
 pub mod launch;
+pub mod loader;
 pub mod meta;
 pub mod plan;
 pub mod port;

@@ -104,6 +104,15 @@ impl DataRoot {
         self.root.join("logs")
     }
 
+    /// Scratch space for the game's JVM.
+    ///
+    /// Passed as `-Djava.io.tmpdir`: some loaders write remapped jars and image
+    /// caches there, and keeping it inside `data/` is what makes the installation
+    /// genuinely portable (and works on machines whose `%TEMP%` is locked down).
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.root.join("tmp")
+    }
+
     /// Create the directory skeleton. Idempotent.
     pub fn ensure(&self) -> MlrcResult<()> {
         let dirs = [
@@ -115,6 +124,7 @@ impl DataRoot {
             self.minecraft_dir(),
             self.meta_dir(),
             self.logs_dir(),
+            self.tmp_dir(),
         ];
         for dir in dirs {
             std::fs::create_dir_all(&dir).map_err(|err| self.write_error(&dir, err))?;

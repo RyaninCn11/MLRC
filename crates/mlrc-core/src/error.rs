@@ -23,6 +23,7 @@ pub enum ErrorCode {
     JavaMetaMissing,
     JavaInUse,
     CacheStale,
+    LoaderUnavailable,
 }
 
 impl ErrorCode {
@@ -44,10 +45,11 @@ impl ErrorCode {
             Self::JavaMetaMissing => "E_JAVA_META_MISSING",
             Self::JavaInUse => "E_JAVA_IN_USE",
             Self::CacheStale => "E_CACHE_STALE",
+            Self::LoaderUnavailable => "E_LOADER_UNAVAILABLE",
         }
     }
 
-    /// Process exit code for this error, per the output contract in PLAN.md.
+    /// Process exit code for this error, per the output contract in DOCS.md.
     pub const fn exit_code(self) -> i32 {
         match self {
             Self::Usage => 2,
@@ -55,7 +57,7 @@ impl ErrorCode {
             Self::JavaMissing | Self::JavaTooOld | Self::JavaMetaMissing | Self::JavaInUse => 5,
             Self::MetaShape => 6,
             Self::PortableReadOnly => 7,
-            Self::VersionUnknown | Self::VersionIncomplete => 8,
+            Self::VersionUnknown | Self::VersionIncomplete | Self::LoaderUnavailable => 8,
             Self::Config
             | Self::Io
             | Self::Doctor

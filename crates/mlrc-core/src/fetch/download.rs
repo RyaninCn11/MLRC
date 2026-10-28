@@ -86,7 +86,7 @@ impl<'a> Downloader<'a> {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| task.url.clone());
 
-        if self.store.contains(&task.sha1, task.size) {
+        if !task.sha1.is_empty() && self.store.contains(&task.sha1, task.size) {
             for dest in &task.dests {
                 self.store.materialize(&task.sha1, dest)?;
             }
@@ -103,30 +103,54 @@ impl<'a> Downloader<'a> {
             total_bytes: Some(task.size),
         });
 
-        let object = self.store.path_for(&task.sha1);
-        if let Some(parent) = object.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|err| {
-                MlrcError::new(
-                    ErrorCode::Io,
-                    format!("cannot create {}: {err}", parent.display()),
-                )
-            })?;
+        // A few loader libraries publish Maven coordinates and no hash. They cannot
+        // live in the content-addressed store, so they are written straight to their
+        // destinations, unverified but still retried.
+        let object = if task.sha1.is_empty() {
+            None
+        } else {
+            let object = self.store.path_for(&task.sha1);
+            if let Some(parent) = object.parent() {
+                tokio::fs::create_dir_all(parent).await.map_err(|err| {
+                    MlrcError::new(
+                        ErrorCode::Io,
+                        format!("cannot create {}: {err}", parent.display()),
+                    )
+                })?;
+            }
+            Some(object)
+        };
+
+        if object.is_none() {
+            if let Some(dest) = task.dests.first() {
+                if let Some(parent) = dest.parent() {
+                    tokio::fs::create_dir_all(parent).await.map_err(|err| {
+                        MlrcError::new(
+                            ErrorCode::Io,
+                            format!("cannot create {}: {err}", parent.display()),
+                        )
+                    })?;
+                }
+            }
         }
-        let part = part_path(&object);
+
+        let part = match &object {
+            Some(object) => part_path(object),
+            None => match task.dests.first() {
+                Some(dest) => part_path(dest),
+                None => return Ok(()),
+            },
+        };
 
         let mut last_error: Option<MlrcError> = None;
         for attempt in 0..self.attempts.max(1) {
-            match self.fetch_to(task, &part).await {
+            let result = match &object {
+                Some(object) => self.fetch_to_store(task, object, &part).await,
+                None => self.fetch_to_dests(task).await,
+            };
+
+            match result {
                 Ok(()) => {
-                    tokio::fs::rename(&part, &object).await.map_err(|err| {
-                        MlrcError::new(
-                            ErrorCode::Io,
-                            format!("cannot finalize {}: {err}", object.display()),
-                        )
-                    })?;
-                    for dest in &task.dests {
-                        self.store.materialize(&task.sha1, dest)?;
-                    }
                     self.sink.emit(Event::FileFinished {
                         path: label,
                         ok: true,
@@ -160,6 +184,42 @@ impl<'a> Downloader<'a> {
         Err(last_error.unwrap_or_else(|| {
             MlrcError::new(ErrorCode::Network, format!("download failed: {}", task.url))
         }))
+    }
+
+    async fn fetch_to_store(
+        &self,
+        task: &DownloadTask,
+        object: &Path,
+        part: &Path,
+    ) -> MlrcResult<()> {
+        self.fetch_to(task, part).await?;
+        tokio::fs::rename(part, object).await.map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot finalize {}: {err}", object.display()),
+            )
+        })?;
+        for dest in &task.dests {
+            self.store.materialize(&task.sha1, dest)?;
+        }
+        Ok(())
+    }
+
+    async fn fetch_to_dests(&self, task: &DownloadTask) -> MlrcResult<()> {
+        for dest in &task.dests {
+            let part = part_path(dest);
+            if let Err(err) = self.fetch_to(task, &part).await {
+                let _ = tokio::fs::remove_file(&part).await;
+                return Err(err);
+            }
+            tokio::fs::rename(&part, dest).await.map_err(|err| {
+                MlrcError::new(
+                    ErrorCode::Io,
+                    format!("cannot finalize {}: {err}", dest.display()),
+                )
+            })?;
+        }
+        Ok(())
     }
 
     async fn fetch_to(&self, task: &DownloadTask, part: &Path) -> MlrcResult<()> {

@@ -68,6 +68,10 @@ pub enum Command {
         /// Parallel downloads
         #[arg(long, default_value_t = 8)]
         threads: usize,
+
+        /// Install a loader on top of the version: `fabric` or `fabric:<loader version>`
+        #[arg(long, value_name = "NAME[:VERSION]")]
+        loader: Option<String>,
     },
 
     /// Launch an installed version
