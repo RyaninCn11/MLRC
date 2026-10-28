@@ -22,6 +22,7 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Fabric, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|forge|neoforge`
 - [x] Named instances, each with its own game directory
 - [x] Set the in-game language before launch (`--lang zh_cn`)
+- [x] Mods from Modrinth: search, install with dependencies, list
 - [ ] Microsoft account login
 - [ ] Quilt loader
 - [ ] Graphical front-end
@@ -100,6 +101,15 @@ mlrc config set java.xmx 6G             # every launch
 mlrc instance create big --version neoforge-21.1.265 --memory 8G
 ```
 
+Mods come from Modrinth, filtered by the loader and Minecraft version of the version
+you point at; required dependencies are installed with them:
+
+```bash
+mlrc mod search sodium --instance big
+mlrc mod install iris --instance big      # also installs Sodium
+mlrc mod list --instance big
+```
+
 ### Commands
 
 | Command | Purpose |
@@ -110,6 +120,7 @@ mlrc instance create big --version neoforge-21.1.265 --memory 8G
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
+| `mlrc mod search \| install \| list` | Mods from Modrinth, filtered by the version's loader and Minecraft version |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |

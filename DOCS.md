@@ -469,6 +469,9 @@ mlrc list [--all] [--json]
 mlrc use <version>
 mlrc uninstall <version>
 mlrc instance create <name> --version <id> [--memory <size>] | list | remove <name>
+mlrc mod search <query> [--mc <ver>] [--loader <name>] [--instance <n>] [--limit N]
+mlrc mod install <project...> [--instance <n>] [--version <id>]
+mlrc mod list [--instance <n>] [--version <id>]
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list
@@ -523,6 +526,23 @@ its own strings, which is why C1 forbids translated text in the engine.
 English, one line per action, no colour. Access tokens are masked everywhere,
 including in `-v` logs and `--dry-run` command lines.
 
+### 10.6 Mods
+
+`mlrc mod` speaks Modrinth's v2 API: search, and per-project versions filtered by
+`game_versions` and `loaders`.
+
+- The loader and Minecraft version come from an installed version rather than from
+  parsing ids. `inheritsFrom` is the authority, which is also what makes
+  `neoforge-21.1.265` resolvable at all. `--mc` and `--loader` override them.
+- A version without a loader is a usage error: there is no mods directory to fill.
+- Versions are taken newest first but `version_type: release` is preferred, so
+  `mod install iris` does not quietly pick a beta.
+- Required dependencies are installed too, depth-first and de-duplicated by project,
+  so a dependency cycle cannot loop and a shared dependency lands once.
+- Files go into `<game dir>/mods/`, are written through a `.part` sibling and are
+  checked against Modrinth's SHA1. A file that is already there is left alone, which
+  is what makes a second `mod install` a no-op rather than a re-download.
+
 ---
 
 ## 11. Testing
@@ -546,6 +566,7 @@ including in `-v` logs and `--dry-run` command lines.
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
 | A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer's libraries are pre-downloaded through the configured source, the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
 | A machine needs a proxy | child JVMs (installers and the game) get `-Dhttp(s).proxy*` from the environment or the Windows settings |
+| Modrinth is unreachable or changes its shape | failures surface as `E_NET_HTTP` / `E_META_SHAPE` with the URL; nothing is written into `mods/` unless the SHA1 matches |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
 | Hardlinks are unsupported (FAT32, SMB) | degrade to copy and warn |
 | Non-ASCII text creeps into sources | CI gate |

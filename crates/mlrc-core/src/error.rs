@@ -24,6 +24,8 @@ pub enum ErrorCode {
     JavaInUse,
     CacheStale,
     LoaderUnavailable,
+    ModNotFound,
+    ModConflict,
 }
 
 impl ErrorCode {
@@ -46,6 +48,8 @@ impl ErrorCode {
             Self::JavaInUse => "E_JAVA_IN_USE",
             Self::CacheStale => "E_CACHE_STALE",
             Self::LoaderUnavailable => "E_LOADER_UNAVAILABLE",
+            Self::ModNotFound => "E_MOD_NOT_FOUND",
+            Self::ModConflict => "E_MOD_CONFLICT",
         }
     }
 
@@ -58,6 +62,7 @@ impl ErrorCode {
             Self::MetaShape => 6,
             Self::PortableReadOnly => 7,
             Self::VersionUnknown | Self::VersionIncomplete | Self::LoaderUnavailable => 8,
+            Self::ModNotFound | Self::ModConflict => 9,
             Self::Config
             | Self::Io
             | Self::Doctor

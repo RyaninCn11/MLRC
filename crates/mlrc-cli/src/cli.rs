@@ -124,6 +124,12 @@ pub enum Command {
         command: InstanceCommand,
     },
 
+    /// Search and install mods from Modrinth
+    Mod {
+        #[command(subcommand)]
+        command: ModCommand,
+    },
+
     /// List installed versions
     List {
         /// List every version known to the manifest (requires network)
@@ -190,6 +196,47 @@ pub enum InstanceCommand {
     List,
     /// Remove an instance and its game directory
     Remove { name: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ModCommand {
+    /// Search Modrinth; the loader and Minecraft version come from an installed version
+    Search {
+        query: String,
+        /// Minecraft version, overriding the one taken from the version
+        #[arg(long)]
+        mc: Option<String>,
+        /// Mod loader: fabric, forge or neoforge
+        #[arg(long)]
+        loader: Option<String>,
+        /// Take the loader and version from an instance
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        /// Take the loader and version from an installed version
+        #[arg(long)]
+        version: Option<String>,
+        /// How many results to show
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+    /// Install mods, together with their required dependencies
+    Install {
+        /// Modrinth slug or project id
+        projects: Vec<String>,
+        /// Target an instance's game directory
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        /// Target another installed version
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// List the jars in a mods directory
+    List {
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

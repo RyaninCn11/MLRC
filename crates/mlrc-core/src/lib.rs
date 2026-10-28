@@ -20,6 +20,7 @@ pub mod java;
 pub mod launch;
 pub mod loader;
 pub mod meta;
+pub mod mods;
 pub mod plan;
 pub mod port;
 pub mod store;

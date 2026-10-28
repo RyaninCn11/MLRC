@@ -47,6 +47,39 @@ impl HttpClient {
         self.get_bytes_inner(url, None).await
     }
 
+    /// JSON with query parameters. No mirror rewriting: this is for APIs that have
+    /// no mirrored equivalent (Modrinth), and reqwest encodes the values properly.
+    pub async fn get_json_query<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+    ) -> MlrcResult<T> {
+        let response = self
+            .inner
+            .get(url)
+            .header(
+                reqwest::header::USER_AGENT,
+                crate::mods::modrinth::user_agent(),
+            )
+            .query(query)
+            .send()
+            .await
+            .map_err(|err| net_error(url, &err))?;
+
+        if !response.status().is_success() {
+            return Err(http_error(url, response.status()));
+        }
+
+        let bytes = response.bytes().await.map_err(|err| net_error(url, &err))?;
+        serde_json::from_slice(&bytes).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::MetaShape,
+                format!("cannot parse json from {url}: {err}"),
+            )
+            .with("url", url)
+        })
+    }
+
     /// Per-request timeout, for calls that must fail fast rather than hang: a maven
     /// host that accepts a connection and then goes quiet otherwise eats the whole
     /// 120 second budget.

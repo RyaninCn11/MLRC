@@ -25,6 +25,7 @@ use mlrc_core::loader::forge::{self, Flavour};
 use mlrc_core::meta::manifest::VersionManifest;
 use mlrc_core::meta::rule::Env;
 use mlrc_core::meta::version::Artifact;
+use mlrc_core::mods;
 use mlrc_core::plan::install;
 use mlrc_core::port::config::{self, Config, KEYS as CONFIG_KEYS};
 use mlrc_core::port::state::{self, InstalledState};
@@ -32,7 +33,7 @@ use mlrc_core::port::DataRoot;
 
 use crate::cli::{
     CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
-    JavaMode as CliJavaMode, MirrorArg,
+    JavaMode as CliJavaMode, MirrorArg, ModCommand,
 };
 use crate::progress::ProgressSink;
 use crate::render::Out;
@@ -96,6 +97,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         Command::Uninstall { version } => cmd_uninstall(cli, out, version),
         Command::Cache { command } => cmd_cache(cli, out, command),
         Command::Instance { command } => cmd_instance(cli, out, command),
+        Command::Mod { command } => cmd_mod(cli, out, command).await,
         Command::Java { command } => cmd_java(cli, out, command).await,
         Command::Auth { .. } => Err(not_implemented("auth", "M5")),
     }
@@ -1074,6 +1076,274 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
     }
 
     Ok(())
+}
+
+async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
+    let root = DataRoot::resolve(cli.data_dir.as_deref())?;
+    root.ensure()?;
+    let cfg = Config::load(&root.config_path())?;
+    let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
+    let client = HttpClient::new(mirror)?;
+
+    match command {
+        ModCommand::Search {
+            query,
+            mc,
+            loader,
+            instance,
+            version,
+            limit,
+        } => {
+            let instance = load_instance(&root, instance.as_deref())?;
+            let platform = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                mc.as_deref(),
+                loader.as_deref(),
+            )?;
+            let hits =
+                mods::modrinth::search(&client, query, &platform.mc, &platform.loader, *limit)
+                    .await?;
+
+            if out.is_json() {
+                let items: Vec<_> = hits
+                    .iter()
+                    .map(|hit| {
+                        json!({
+                            "slug": hit.slug,
+                            "title": hit.title,
+                            "description": hit.description,
+                            "downloads": hit.downloads,
+                        })
+                    })
+                    .collect();
+                out.json_event(json!({"schema": 1, "event": "mod_search", "hits": items}));
+                return Ok(());
+            }
+
+            if hits.is_empty() {
+                out.human(format!(
+                    "no mods match {query} for minecraft {} on {}",
+                    platform.mc, platform.loader
+                ));
+                return Ok(());
+            }
+
+            out.human(format!(" {:<24}{:<34}{}", "SLUG", "TITLE", "DOWNLOADS"));
+            for hit in &hits {
+                out.human(format!(
+                    " {:<24}{:<34}{}",
+                    truncate(&hit.slug, 23),
+                    truncate(&hit.title, 33),
+                    thousands(hit.downloads)
+                ));
+            }
+        }
+        ModCommand::Install {
+            projects,
+            instance,
+            version,
+        } => {
+            if projects.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no project given; run `mlrc mod install sodium`",
+                ));
+            }
+
+            let instance = load_instance(&root, instance.as_deref())?;
+            let platform = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = match &instance {
+                Some(instance) => Instance::game_dir(&root, &instance.name),
+                None => root.minecraft_dir(),
+            };
+
+            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let mut total = 0u64;
+            let mut names = Vec::new();
+
+            for project in projects {
+                let installed =
+                    mods::install(&client, &game_dir, &platform, project, &sink).await?;
+                sink.finish();
+
+                for module in &installed {
+                    if module.already_present {
+                        out.human(format!("already present: {}", module.filename));
+                    } else {
+                        total += module.bytes;
+                        out.human(format!(
+                            "installed {} ({})",
+                            module.filename,
+                            human_bytes(module.bytes)
+                        ));
+                    }
+                    names.push(module.filename.clone());
+                }
+            }
+
+            out.human(format!(
+                "{} file(s) in {}, {} downloaded",
+                names.len(),
+                mods::mods_dir(&game_dir).display(),
+                human_bytes(total)
+            ));
+            out.json_event(json!({
+                "schema": 1,
+                "event": "mods_installed",
+                "minecraft": platform.mc,
+                "loader": platform.loader,
+                "files": names,
+                "bytes": total,
+            }));
+        }
+        ModCommand::List { instance, version } => {
+            let instance = load_instance(&root, instance.as_deref())?;
+            let _ = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = match &instance {
+                Some(instance) => Instance::game_dir(&root, &instance.name),
+                None => root.minecraft_dir(),
+            };
+            let dir = mods::mods_dir(&game_dir);
+
+            let mut files: Vec<String> = Vec::new();
+            if dir.is_dir() {
+                for entry in std::fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    if !entry.file_type()?.is_file() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.ends_with(".jar") || name.ends_with(".jar.disabled") {
+                        files.push(name);
+                    }
+                }
+            }
+            files.sort();
+
+            if out.is_json() {
+                out.json_event(
+                    json!({"schema": 1, "event": "mods", "dir": dir.display().to_string(), "files": files}),
+                );
+                return Ok(());
+            }
+
+            if files.is_empty() {
+                out.human(format!("no mods in {}", dir.display()));
+                return Ok(());
+            }
+            for file in &files {
+                out.human(file.clone());
+            }
+            out.human(format!("{} file(s) in {}", files.len(), dir.display()));
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolves the loader and Minecraft version to search or install against.
+///
+/// Explicit `--mc`/`--loader` win; otherwise they come from the target version, which
+/// is the instance's, the `--version` one, or the configured default.
+fn mod_platform(
+    root: &DataRoot,
+    cfg: &Config,
+    version: Option<&str>,
+    instance: Option<&Instance>,
+    mc: Option<&str>,
+    loader: Option<&str>,
+) -> MlrcResult<mods::Platform> {
+    let mut platform = match (mc, loader) {
+        (Some(mc), Some(loader)) => mods::Platform {
+            mc: mc.to_string(),
+            loader: loader.to_string(),
+        },
+        _ => {
+            let id = match version {
+                Some(id) => id.to_string(),
+                None => match instance {
+                    Some(instance) => instance.version.clone(),
+                    None if !cfg.general.default_version.is_empty() => {
+                        cfg.general.default_version.clone()
+                    }
+                    None => {
+                        return Err(MlrcError::new(
+                            ErrorCode::Usage,
+                            "no version to take the loader from; pass --mc and --loader, or `mlrc use <version>`",
+                        ))
+                    }
+                },
+            };
+            mods::platform(root, &id)?
+        }
+    };
+
+    if let Some(mc) = mc {
+        platform.mc = mc.to_string();
+    }
+    if let Some(loader) = loader {
+        platform.loader = loader.to_string();
+    }
+
+    if !["fabric", "forge", "neoforge"].contains(&platform.loader.as_str()) {
+        return Err(MlrcError::new(
+            ErrorCode::Usage,
+            format!(
+                "unknown loader {} (expected fabric, forge or neoforge)",
+                platform.loader
+            ),
+        ));
+    }
+
+    Ok(platform)
+}
+
+fn load_instance(root: &DataRoot, name: Option<&str>) -> MlrcResult<Option<Instance>> {
+    let Some(name) = name else {
+        return Ok(None);
+    };
+    Instance::load(root, name)?.map(Some).ok_or_else(|| {
+        MlrcError::new(ErrorCode::Usage, format!("no such instance: {name}"))
+            .with("instance", name.to_string())
+    })
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('~');
+    out
+}
+
+fn thousands(value: u64) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (index, ch) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 async fn cmd_java(cli: &Cli, out: &Out, command: &JavaCommand) -> MlrcResult<()> {
