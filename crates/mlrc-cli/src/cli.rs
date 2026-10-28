@@ -105,6 +105,14 @@ pub enum Command {
         #[arg(long, value_name = "CODE")]
         lang: Option<String>,
 
+        /// Heap size for the game, e.g. 4G or 4096M. Overrides the config.
+        #[arg(long, value_name = "SIZE")]
+        memory: Option<String>,
+
+        /// Extra JVM flag, repeatable, e.g. --jvm-arg -XX:+UseG1GC
+        #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
+        jvm_arg: Vec<String>,
+
         /// Extra arguments for the game, after `--`
         #[arg(last = true)]
         game_args: Vec<String>,
@@ -174,6 +182,9 @@ pub enum InstanceCommand {
         name: String,
         #[arg(long)]
         version: String,
+        /// Heap for this instance, e.g. 4G. Defaults to the global setting.
+        #[arg(long, value_name = "SIZE")]
+        memory: Option<String>,
     },
     /// List instances
     List,

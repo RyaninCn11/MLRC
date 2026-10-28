@@ -92,16 +92,24 @@ mlrc launch --lang zh_cn
 mlrc config set gameLanguage zh_cn      # every launch
 ```
 
+Modded packs need more than the 2G default heap:
+
+```bash
+mlrc launch 1.21.1-forge-52.1.20 --memory 6G
+mlrc config set java.xmx 6G             # every launch
+mlrc instance create big --version neoforge-21.1.265 --memory 8G
+```
+
 ### Commands
 
 | Command | Purpose |
 |---|---|
-| `mlrc install <version>` | Install a version; `--loader fabric`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
-| `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
+| `mlrc install <version>` | Install a version; `--loader fabric\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
+| `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--memory 4G`, `--jvm-arg <arg>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
-| `mlrc instance create \| list \| remove` | Named game directories bound to a version |
+| `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |
@@ -117,6 +125,8 @@ Global flags: `--data-dir`, `--json`, `--quiet`, `-v`, `--mirror`.
 [java]
 custom = false      # true: use a host JDK instead of managed runtimes
 path = ""           # explicit java binary
+xms = ""            # initial heap, e.g. 1G; empty leaves Java's default
+xmx = "2G"          # maximum heap; a --memory flag or an instance overrides it
 
 [general]
 default_version = ""

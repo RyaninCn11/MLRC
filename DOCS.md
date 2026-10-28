@@ -307,6 +307,11 @@ bits are applied on Unix.
 - Documents without `arguments.game` fall back to `minecraftArguments`, split on
   whitespace.
 - A missing `-Xmx` gets a `-Xmx2G` default.
+- Heap precedence is `--memory` > the instance's `memory` > `java.xmx`, with the 2G
+  default last; `java.xms` adds `-Xms` when configured. A requested value replaces
+  whatever `default-user-jvm` carried: a modded pack that keeps the 2G default dies
+  with an out-of-memory error instead of anything a user can act on.
+- `--jvm-arg` appends a flag verbatim, for the `-XX:` tuning that no config key covers.
 - `-Djava.io.tmpdir` points at `data/tmp`: loader remapping and image caches then stay
   inside the portable tree instead of the system temp directory.
 - Variables are `${name}` placeholders; unknown ones are left visible rather than
@@ -457,12 +462,13 @@ releases, and a launcher that fails on the unknown is a broken launcher.
 ```
 mlrc install <version> [--loader fabric|forge|neoforge[:<version>]]
              [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
-mlrc launch [<version>] [--instance <name>] [--lang <code>] [--offline]
-            [--username <n>] [--width N] [--height N] [--dry-run] [-- <game args>]
+mlrc launch [<version>] [--instance <name>] [--lang <code>] [--memory <size>]
+            [--jvm-arg <arg>] [--offline] [--username <n>]
+            [--width N] [--height N] [--dry-run] [-- <game args>]
 mlrc list [--all] [--json]
 mlrc use <version>
 mlrc uninstall <version>
-mlrc instance create <name> --version <id> | list | remove <name>
+mlrc instance create <name> --version <id> [--memory <size>] | list | remove <name>
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list

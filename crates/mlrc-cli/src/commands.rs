@@ -72,6 +72,8 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
             dry_run,
             instance,
             lang,
+            memory,
+            jvm_arg,
             game_args,
         } => {
             cmd_launch(
@@ -85,6 +87,8 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
                 *dry_run,
                 instance.as_deref(),
                 lang.as_deref(),
+                memory.as_deref(),
+                jvm_arg,
                 game_args,
             )
             .await
@@ -637,6 +641,8 @@ async fn cmd_launch(
     dry_run: bool,
     instance: Option<&str>,
     lang: Option<&str>,
+    memory: Option<&str>,
+    jvm_args: &[String],
     game_args: &[String],
 ) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
@@ -673,6 +679,17 @@ async fn cmd_launch(
         Some(instance) => Instance::game_dir(&root, &instance.name),
         None => root.minecraft_dir(),
     };
+
+    // Heap precedence: flag, then the instance's own value, then the config.
+    let heap = match memory {
+        Some(value) => Some(launch::memory::normalize(value)?),
+        None => instance
+            .as_ref()
+            .map(|instance| instance.memory.clone())
+            .filter(|value| !value.is_empty())
+            .or_else(|| Some(cfg.java.xmx.clone()).filter(|value| !value.is_empty())),
+    };
+    let initial_heap = Some(cfg.java.xms.clone()).filter(|value| !value.is_empty());
 
     // A flag wins over the configured default; an empty value means "leave the
     // game's own setting alone".
@@ -741,7 +758,9 @@ async fn cmd_launch(
         width,
         height,
         extra_game_args: game_args.to_vec(),
-        jvm_args: Vec::new(),
+        jvm_args: jvm_args.to_vec(),
+        memory: heap,
+        initial_memory: initial_heap,
     };
     let plan = launch::build(
         &document, &plan, &root, &identity, &java, &game_dir, &options,
@@ -956,7 +975,11 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
     root.ensure()?;
 
     match command {
-        InstanceCommand::Create { name, version } => {
+        InstanceCommand::Create {
+            name,
+            version,
+            memory,
+        } => {
             // An instance only owns its game directory; the version it points at has
             // to exist already.
             match InstalledState::read(&root.version_dir(version).join(InstalledState::FILE_NAME))?
@@ -984,7 +1007,7 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
                 .with("instance", name.clone()));
             }
 
-            let instance = Instance::create(&root, name, version)?;
+            let instance = Instance::create(&root, name, version, memory.as_deref().unwrap_or(""))?;
             let game_dir = Instance::game_dir(&root, &instance.name);
 
             out.human(format!(
@@ -1011,6 +1034,7 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
                         json!({
                             "name": instance.name,
                             "version": instance.version,
+                            "memory": instance.memory,
                             "game_dir": Instance::game_dir(&root, &instance.name).display().to_string(),
                         })
                     })
@@ -1024,9 +1048,17 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
                 return Ok(());
             }
 
-            out.human(format!(" {:<24}{}", "NAME", "VERSION"));
+            out.human(format!(" {:<24}{:<40}{}", "NAME", "VERSION", "HEAP"));
             for instance in &instances {
-                out.human(format!(" {:<24}{}", instance.name, instance.version));
+                let heap = if instance.memory.is_empty() {
+                    "-"
+                } else {
+                    instance.memory.as_str()
+                };
+                out.human(format!(
+                    " {:<24}{:<40}{}",
+                    instance.name, instance.version, heap
+                ));
             }
         }
         InstanceCommand::Remove { name } => {

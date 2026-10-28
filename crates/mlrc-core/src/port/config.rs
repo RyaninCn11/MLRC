@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 5] = [
+pub const KEYS: [&str; 7] = [
     "java.custom",
     "java.path",
+    "java.xms",
+    "java.xmx",
     "general.default_version",
     "general.mirror",
     "general.game_language",
@@ -31,6 +33,10 @@ pub struct JavaConfig {
     pub custom: bool,
     /// Explicit java binary. Wins over everything when set.
     pub path: String,
+    /// `-Xms`; empty leaves Java's default alone.
+    pub xms: String,
+    /// `-Xmx`; empty means the launcher's 2G default.
+    pub xmx: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -106,6 +112,8 @@ impl Config {
         Ok(match canonical(key)? {
             "java.custom" => self.java.custom.to_string(),
             "java.path" => self.java.path.clone(),
+            "java.xms" => self.java.xms.clone(),
+            "java.xmx" => self.java.xmx.clone(),
             "general.default_version" => self.general.default_version.clone(),
             "general.mirror" => self.general.mirror.as_str().to_string(),
             "general.game_language" => self.general.game_language.clone(),
@@ -117,6 +125,20 @@ impl Config {
         match canonical(key)? {
             "java.custom" => self.java.custom = parse_bool(key, value)?,
             "java.path" => self.java.path = value.to_string(),
+            "java.xms" | "java.xmx" => {
+                // `default` and an empty value both mean "do not pass this flag".
+                let cleared = value.is_empty() || value.eq_ignore_ascii_case("default");
+                let stored = if cleared {
+                    String::new()
+                } else {
+                    crate::launch::memory::normalize(value)?
+                };
+                if key.trim().ends_with("xms") || key.eq_ignore_ascii_case("xms") {
+                    self.java.xms = stored;
+                } else {
+                    self.java.xmx = stored;
+                }
+            }
             "general.default_version" => self.general.default_version = value.to_string(),
             "general.mirror" => {
                 self.general.mirror = match value.to_ascii_lowercase().as_str() {
@@ -157,6 +179,8 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
     Ok(match key.trim() {
         "java.custom" | "customJava" | "customjava" => "java.custom",
         "java.path" | "javaPath" | "javapath" => "java.path",
+        "java.xms" | "xms" => "java.xms",
+        "java.xmx" | "xmx" | "memory" => "java.xmx",
         "general.default_version" | "defaultVersion" | "defaultversion" => {
             "general.default_version"
         }

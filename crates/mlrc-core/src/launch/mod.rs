@@ -1,5 +1,6 @@
 //! Turning an installed version plus an identity into a concrete command line.
 
+pub mod memory;
 pub mod natives;
 pub mod options;
 pub mod spawn;
@@ -29,6 +30,10 @@ pub struct LaunchOptions {
     pub extra_game_args: Vec<String>,
     /// Extra JVM flags from the user; when set, `default-user-jvm` is not applied.
     pub jvm_args: Vec<String>,
+    /// `-Xmx` value, already normalised by [`memory::normalize`].
+    pub memory: Option<String>,
+    /// `-Xms` value, already normalised; `None` leaves Java's default alone.
+    pub initial_memory: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,8 +189,21 @@ pub fn build(
         jvm = with_proxy;
     }
 
-    if !jvm.iter().any(|argument| argument.starts_with("-Xmx")) {
-        jvm.insert(0, "-Xmx2G".to_string());
+    // A requested heap wins over whatever the document or `default-user-jvm` carries,
+    // otherwise a modded pack keeps the 2G default and dies with an OOM.
+    if let Some(xms) = &options.initial_memory {
+        jvm.retain(|argument| !argument.starts_with("-Xms"));
+        jvm.insert(0, format!("-Xms{xms}"));
+    }
+    match &options.memory {
+        Some(memory) => {
+            jvm.retain(|argument| !argument.starts_with("-Xmx"));
+            jvm.insert(0, format!("-Xmx{memory}"));
+        }
+        None if !jvm.iter().any(|argument| argument.starts_with("-Xmx")) => {
+            jvm.insert(0, "-Xmx2G".to_string());
+        }
+        None => {}
     }
 
     let game_args = game_arguments(version, &env, &vars, options);

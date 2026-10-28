@@ -17,6 +17,9 @@ pub const FILE_NAME: &str = "instance.toml";
 pub struct Instance {
     pub name: String,
     pub version: String,
+    /// `-Xmx` for this instance, empty to inherit the global setting.
+    #[serde(default)]
+    pub memory: String,
 }
 
 impl Instance {
@@ -51,12 +54,18 @@ impl Instance {
         }
     }
 
-    pub fn create(root: &DataRoot, name: &str, version: &str) -> MlrcResult<Self> {
+    pub fn create(root: &DataRoot, name: &str, version: &str, memory: &str) -> MlrcResult<Self> {
         Self::validate_name(name)?;
+        let memory = if memory.is_empty() {
+            String::new()
+        } else {
+            crate::launch::memory::normalize(memory)?
+        };
 
         let instance = Self {
             name: name.to_string(),
             version: version.to_string(),
+            memory,
         };
 
         std::fs::create_dir_all(Self::game_dir(root, name))?;
