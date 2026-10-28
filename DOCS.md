@@ -522,7 +522,7 @@ including in `-v` logs and `--dry-run` command lines.
 | A shared public client id is revoked | configurable client id; a self-registered Azure application is documented |
 | Mojang changes the metadata shape | every field defaulted, unknown fields ignored, `doctor` reports unhealthy pieces |
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
-| A loader installer cannot reach its maven | the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
+| A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
 | Hardlinks are unsupported (FAT32, SMB) | degrade to copy and warn |
 | Non-ASCII text creeps into sources | CI gate |

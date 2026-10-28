@@ -44,7 +44,26 @@ impl HttpClient {
     }
 
     pub async fn get_bytes(&self, url: &str) -> MlrcResult<Vec<u8>> {
-        let response = self.get_response(url).await?;
+        self.get_bytes_inner(url, None).await
+    }
+
+    /// Per-request timeout, for calls that must fail fast rather than hang: a maven
+    /// host that accepts a connection and then goes quiet otherwise eats the whole
+    /// 120 second budget.
+    pub async fn get_bytes_with_timeout(
+        &self,
+        url: &str,
+        timeout: std::time::Duration,
+    ) -> MlrcResult<Vec<u8>> {
+        self.get_bytes_inner(url, Some(timeout)).await
+    }
+
+    async fn get_bytes_inner(
+        &self,
+        url: &str,
+        timeout: Option<std::time::Duration>,
+    ) -> MlrcResult<Vec<u8>> {
+        let response = self.get_response_with_timeout(url, timeout).await?;
         let bytes = response.bytes().await.map_err(|err| net_error(url, &err))?;
         Ok(bytes.to_vec())
     }
@@ -56,21 +75,29 @@ impl HttpClient {
     /// against the official URL. The hash check downstream is unaffected - it runs
     /// on the bytes, wherever they came from.
     pub async fn get_response(&self, url: &str) -> MlrcResult<reqwest::Response> {
+        self.get_response_with_timeout(url, None).await
+    }
+
+    async fn get_response_with_timeout(
+        &self,
+        url: &str,
+        timeout: Option<std::time::Duration>,
+    ) -> MlrcResult<reqwest::Response> {
         let target = self.mirror.rewrite(url);
         let mirrored = target != url;
 
-        match self.send(&target).await {
+        match self.send(&target, timeout).await {
             Ok(response) if response.status().is_success() => Ok(response),
             Ok(response) if mirrored => {
                 drop(response);
-                match self.send(url).await {
+                match self.send(url, timeout).await {
                     Ok(origin) if origin.status().is_success() => Ok(origin),
                     Ok(origin) => Err(http_error(url, origin.status())),
                     Err(err) => Err(err),
                 }
             }
             Ok(response) => Err(http_error(&target, response.status())),
-            Err(err) if mirrored => match self.send(url).await {
+            Err(err) if mirrored => match self.send(url, timeout).await {
                 Ok(origin) if origin.status().is_success() => Ok(origin),
                 Ok(origin) => Err(http_error(url, origin.status())),
                 Err(_) => Err(err),
@@ -79,12 +106,16 @@ impl HttpClient {
         }
     }
 
-    async fn send(&self, url: &str) -> MlrcResult<reqwest::Response> {
-        self.inner
-            .get(url)
-            .send()
-            .await
-            .map_err(|err| net_error(url, &err))
+    async fn send(
+        &self,
+        url: &str,
+        timeout: Option<std::time::Duration>,
+    ) -> MlrcResult<reqwest::Response> {
+        let mut request = self.inner.get(url);
+        if let Some(timeout) = timeout {
+            request = request.timeout(timeout);
+        }
+        request.send().await.map_err(|err| net_error(url, &err))
     }
 }
 

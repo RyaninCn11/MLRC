@@ -4,8 +4,10 @@
 //! document. MLRC does not reimplement their processors; it runs the official
 //! installer against a staging launcher directory and then adopts what it produced.
 
+use std::time::Duration;
+
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
-use crate::fetch::HttpClient;
+use crate::fetch::{HttpClient, Mirror};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flavour {
@@ -80,7 +82,7 @@ pub async fn resolve(
     mc: &str,
     requested: Option<&str>,
 ) -> MlrcResult<Installer> {
-    let xml = client.get_bytes(flavour.metadata_url()).await?;
+    let xml = fetch_metadata(client, flavour).await?;
     let xml = String::from_utf8_lossy(&xml);
     let versions = parse_versions(&xml);
 
@@ -151,6 +153,48 @@ fn neoforge_prefix(mc: &str) -> Option<String> {
         return None;
     }
     Some(format!("{major}.{minor}."))
+}
+
+/// Metadata is small and must not hang: a maven host that accepts the connection and
+/// then goes quiet would otherwise hold the command for the full client timeout.
+async fn fetch_metadata(client: &HttpClient, flavour: Flavour) -> MlrcResult<Vec<u8>> {
+    let url = flavour.metadata_url();
+    match client
+        .get_bytes_with_timeout(url, Duration::from_secs(10))
+        .await
+    {
+        Ok(bytes) => Ok(bytes),
+        Err(first) => match fetch_mirrored(client, url, Duration::from_secs(10)).await {
+            Ok(bytes) => Ok(bytes),
+            Err(_) => Err(first),
+        },
+    }
+}
+
+/// The installer jar is 8-20 MB, so a longer budget, but the same fallback: several
+/// networks reach one loader's maven and not the other's.
+pub async fn installer_bytes(client: &HttpClient, url: &str) -> MlrcResult<Vec<u8>> {
+    match client
+        .get_bytes_with_timeout(url, Duration::from_secs(90))
+        .await
+    {
+        Ok(bytes) => Ok(bytes),
+        Err(first) => match fetch_mirrored(client, url, Duration::from_secs(90)).await {
+            Ok(bytes) => Ok(bytes),
+            Err(_) => Err(first),
+        },
+    }
+}
+
+async fn fetch_mirrored(client: &HttpClient, url: &str, timeout: Duration) -> MlrcResult<Vec<u8>> {
+    let mirrored = Mirror::Bmclapi.rewrite(url);
+    if mirrored == url {
+        return Err(MlrcError::new(
+            ErrorCode::Network,
+            format!("no mirror is known for {url}"),
+        ));
+    }
+    client.get_bytes_with_timeout(&mirrored, timeout).await
 }
 
 fn parse_versions(xml: &str) -> Vec<String> {

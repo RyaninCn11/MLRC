@@ -539,7 +539,7 @@ pub async fn install_installer(
         total: None,
     });
 
-    let bytes = client.get_bytes(&installer.url).await?;
+    let bytes = crate::loader::forge::installer_bytes(client, &installer.url).await?;
     let installer_jar = stage.join("installer.jar");
     std::fs::write(&installer_jar, &bytes)?;
 
