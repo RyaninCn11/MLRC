@@ -1,0 +1,193 @@
+//! Command surface. Everything here is presentation: the engine lives in mlrc-core.
+
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "mlrc",
+    version,
+    about = "Minecraft Launcher of Rust Command-line",
+    disable_help_subcommand = true
+)]
+pub struct Cli {
+    /// Data directory. Defaults to <directory of the executable>/data (portable).
+    #[arg(long, global = true, value_name = "PATH")]
+    pub data_dir: Option<PathBuf>,
+
+    /// Emit NDJSON events on stdout instead of human text.
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Suppress non-essential human output.
+    #[arg(long, global = true)]
+    pub quiet: bool,
+
+    /// Increase log verbosity (repeatable).
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Download source. `auto` probes both and remembers the faster one.
+    #[arg(long, global = true, value_enum)]
+    pub mirror: Option<MirrorArg>,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum MirrorArg {
+    /// Probe both and keep the faster, remembering the choice
+    Auto,
+    /// Mojang, piston, libraries.minecraft.net
+    Official,
+    /// bmclapi2.bangbang93.com
+    Bmclapi,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Install one Minecraft version and, if needed, the Java runtime it requires
+    Install {
+        /// Version id exactly as the manifest spells it, e.g. 1.18.2
+        version: String,
+
+        /// What to do when the required Java runtime is missing
+        #[arg(long, value_enum, default_value = "auto")]
+        java: JavaMode,
+
+        /// Accept every prompt
+        #[arg(long)]
+        yes: bool,
+
+        /// Print the plan without downloading anything
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Parallel downloads
+        #[arg(long, default_value_t = 8)]
+        threads: usize,
+    },
+
+    /// Launch an installed version
+    Launch {
+        /// Version to launch; defaults to the one set with `mlrc use`
+        version: Option<String>,
+
+        /// Skip Microsoft authentication and use an offline identity
+        #[arg(long)]
+        offline: bool,
+
+        /// Player name for offline mode
+        #[arg(long)]
+        username: Option<String>,
+
+        #[arg(long)]
+        width: Option<u32>,
+
+        #[arg(long)]
+        height: Option<u32>,
+
+        /// Print the command line without starting the game
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Extra arguments for the game, after `--`
+        #[arg(last = true)]
+        game_args: Vec<String>,
+    },
+
+    /// List installed versions
+    List {
+        /// List every version known to the manifest (requires network)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Set the default version used by a bare `mlrc launch`
+    Use { version: String },
+
+    /// Remove an installed version
+    Uninstall { version: String },
+
+    /// Manage MLRC-managed Java runtimes
+    Java {
+        #[command(subcommand)]
+        command: JavaCommand,
+    },
+
+    /// Manage Microsoft accounts
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+
+    /// Read or write configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+
+    /// Manage the content-addressed cache
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommand,
+    },
+
+    /// Check the environment and report problems
+    Doctor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum JavaMode {
+    /// Prompt when interactive, fail with exit code 5 when not
+    Auto,
+    /// Install the runtime without asking
+    Install,
+    /// Continue without the runtime; launching will fail later
+    Skip,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JavaCommand {
+    /// List managed runtimes
+    List,
+    /// Install a runtime by Mojang component name or by major version
+    Install {
+        target: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove a managed runtime
+    Remove { major: u32 },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    /// Sign in with a Microsoft account
+    Login,
+    /// Remove stored credentials
+    Logout,
+    /// Show the current account
+    Status,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigCommand {
+    /// Print one key
+    Get { key: String },
+    /// Set one key
+    Set { key: String, value: String },
+    /// Print every known key
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CacheCommand {
+    /// Drop objects that no installed version references
+    Prune {
+        #[arg(long)]
+        keep_days: Option<u32>,
+    },
+}
