@@ -124,6 +124,14 @@ pub async fn run(root: &DataRoot, cfg: &Config, client: &HttpClient) -> Vec<Chec
         },
     });
 
+    // Loader remapping writes jars through java.nio's zip filesystem, which trusts
+    // Files.isWritable. Antivirus self-protection and restricted tokens can make that
+    // report "read-only" for every path while writes still succeed, and the only
+    // symptom is an opaque "remapping game jars" failure much later.
+    if let Some((java, major)) = any_managed_java(root) {
+        checks.push(java_writability(root, &java, major));
+    }
+
     let (complete, incomplete) = versions(root);
     checks.push(Check {
         name: "versions",
@@ -163,6 +171,105 @@ pub async fn run(root: &DataRoot, cfg: &Config, client: &HttpClient) -> Vec<Chec
     });
 
     checks
+}
+
+/// Newest usable managed runtime, so the check runs whatever the user actually has.
+fn any_managed_java(root: &DataRoot) -> Option<(std::path::PathBuf, u32)> {
+    let mut best: Option<(u32, std::path::PathBuf)> = None;
+
+    for entry in list_dirs(&root.java_dir()) {
+        let Some(major) = entry
+            .strip_prefix("jdk-")
+            .and_then(|rest| rest.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(installed) = discover::managed(root, major) {
+            if best.as_ref().map(|(best, _)| major > *best).unwrap_or(true) {
+                best = Some((major, installed.executable));
+            }
+        }
+    }
+
+    best.map(|(major, path)| (path, major))
+}
+
+const PROBE_SOURCE: &str = r#"import java.nio.file.*;
+
+public class Probe {
+    public static void main(String[] args) throws Exception {
+        Path dir = Paths.get(args[0]);
+        Path probe = dir.resolve("probe.tmp");
+        Files.writeString(probe, "x");
+        Files.delete(probe);
+        System.out.println(Files.isWritable(dir) ? "OK" : "READONLY");
+    }
+}
+"#;
+
+fn java_writability(root: &DataRoot, java: &Path, major: u32) -> Check {
+    // Single-file source launch needs Java 11; older runtimes get no verdict rather
+    // than a misleading one.
+    if major < 11 {
+        return Check {
+            name: "java writes",
+            status: Status::Warn,
+            detail: format!("skipped (java {major} cannot run the probe)"),
+        };
+    }
+
+    let dir = root.tmp_dir().join("doctor-java");
+    let source = dir.join("Probe.java");
+    let prepared = std::fs::create_dir_all(&dir)
+        .map_err(|err| err.to_string())
+        .and_then(|()| std::fs::write(&source, PROBE_SOURCE).map_err(|err| err.to_string()));
+
+    if let Err(err) = prepared {
+        return Check {
+            name: "java writes",
+            status: Status::Warn,
+            detail: format!("skipped ({err})"),
+        };
+    }
+
+    let output = std::process::Command::new(java)
+        .arg("-Djava.io.tmpdir=".to_string() + &root.tmp_dir().display().to_string())
+        .arg(&source)
+        .arg(root.root())
+        .output();
+
+    let text = match output {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        Err(err) => {
+            return Check {
+                name: "java writes",
+                status: Status::Warn,
+                detail: format!("skipped ({err})"),
+            }
+        }
+    };
+
+    if text.contains("READONLY") {
+        Check {
+            name: "java writes",
+            status: Status::Warn,
+            detail: "reports every path read-only; loader remapping (fabric, neoforge) \
+                     will fail. Usually antivirus self-protection or a restricted token"
+                .to_string(),
+        }
+    } else if text.contains("OK") {
+        Check {
+            name: "java writes",
+            status: Status::Ok,
+            detail: "ok".to_string(),
+        }
+    } else {
+        Check {
+            name: "java writes",
+            status: Status::Warn,
+            detail: "skipped (probe produced no verdict)".to_string(),
+        }
+    }
 }
 
 fn managed_jdks(root: &DataRoot) -> (Vec<String>, Vec<String>) {
