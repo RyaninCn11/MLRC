@@ -183,6 +183,10 @@ fn os_version() -> Option<String> {
 }
 
 /// Pulls `10.0.26200.5074` out of `Microsoft Windows [Version 10.0.26200.5074]`.
+///
+/// Windows-only: it exists to feed `os.version` rules, and the other platforms have
+/// no equivalent string to parse. Gating it keeps the Linux build free of dead code.
+#[cfg(windows)]
 fn extract_version(text: &str) -> Option<String> {
     let mut candidate = String::new();
     for ch in text.chars() {
@@ -202,6 +206,7 @@ fn extract_version(text: &str) -> Option<String> {
     }
 }
 
+#[cfg(windows)]
 fn is_version_like(text: &str) -> bool {
     text.split('.').count() >= 2
         && !text.starts_with('.')
@@ -321,6 +326,7 @@ mod tests {
         assert!(!version_pattern_matches("^6\\.1", "10.0.26200"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn os_version_is_extracted_from_ver_output() {
         assert_eq!(
