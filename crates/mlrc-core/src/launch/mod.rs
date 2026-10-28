@@ -99,6 +99,13 @@ pub fn build(
     );
     vars.set("natives_directory", natives_dir.display().to_string());
     vars.set("classpath", classpath.clone());
+    // Used by Forge/NeoForge to build their module path; without them the literal
+    // `${library_directory}` reaches the JVM and the bootstrap cannot find its modules.
+    vars.set(
+        "library_directory",
+        version_dir.join("libraries").display().to_string(),
+    );
+    vars.set("classpath_separator", PATH_SEPARATOR);
     vars.set("launcher_name", "mlrc");
     vars.set("launcher_version", env!("CARGO_PKG_VERSION"));
     if let (Some(width), Some(height)) = (options.width, options.height) {
@@ -164,6 +171,17 @@ pub fn build(
         .any(|argument| argument.starts_with("-Djava.io.tmpdir"))
     {
         jvm.insert(0, format!("-Djava.io.tmpdir={}", tmp_dir.display()));
+    }
+
+    // The game talks to Mojang as well; give it the same proxy the launcher uses,
+    // unless the instance already pins its own.
+    if !jvm
+        .iter()
+        .any(|argument| argument.starts_with("-Dhttp.proxyHost"))
+    {
+        let mut with_proxy = crate::fetch::proxy::java_args();
+        with_proxy.append(&mut jvm);
+        jvm = with_proxy;
     }
 
     if !jvm.iter().any(|argument| argument.starts_with("-Xmx")) {

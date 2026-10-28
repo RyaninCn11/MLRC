@@ -19,11 +19,10 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Launch the game offline with a derived player identity
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
-- [x] Fabric and Forge loaders: `mlrc install <mc> --loader fabric|forge`
+- [x] Fabric, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|forge|neoforge`
 - [x] Named instances, each with its own game directory
 - [x] Set the in-game language before launch (`--lang zh_cn`)
 - [ ] Microsoft account login
-- [ ] NeoForge loader (installer path in place, not verified end to end)
 - [ ] Quilt loader
 - [ ] Graphical front-end
 
@@ -80,6 +79,9 @@ any other version:
 ```bash
 mlrc install 1.21.1 --loader forge
 mlrc launch 1.21.1-forge-52.1.20
+
+mlrc install 1.21.1 --loader neoforge
+mlrc launch neoforge-21.1.265
 ```
 
 Want the game itself in another language? Minecraft has no launch switch for it, so

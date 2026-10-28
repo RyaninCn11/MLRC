@@ -1,7 +1,9 @@
 //! Installing one version: metadata, then bytes, then state.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
@@ -543,15 +545,22 @@ pub async fn install_installer(
     let installer_jar = stage.join("installer.jar");
     std::fs::write(&installer_jar, &bytes)?;
 
+    // NeoForge's installer ignores `--mirror` for library downloads; seeding them
+    // first is what keeps the install possible on a blocked maven host.
+    crate::loader::forge::preseed_libraries(client, &stage, &installer_jar, sink).await?;
+
     let mut command = std::process::Command::new(&java);
     command
         // The installer creates temp directories; keep them inside the data tree.
         .arg(format!("-Djava.io.tmpdir={}", root.tmp_dir().display()))
+        .args(crate::fetch::proxy::java_args())
         .arg("-jar")
         .arg(&installer_jar)
         .arg("--installClient")
         .arg(&stage)
-        .current_dir(&stage);
+        .current_dir(&stage)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     // The installers fetch their own libraries from their maven. Point them at the
     // mirror when one is in use, otherwise a blocked host fails the whole install.
@@ -561,7 +570,19 @@ pub async fn install_installer(
             .arg("https://bmclapi2.bangbang93.com/maven");
     }
 
-    let output = command.output().map_err(|err| {
+    let log_path = root
+        .logs_dir()
+        .join(format!("installer-{}.log", installer.id));
+    let log = std::sync::Arc::new(std::sync::Mutex::new(
+        std::fs::File::create(&log_path).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot create {}: {err}", log_path.display()),
+            )
+        })?,
+    ));
+
+    let mut child = command.spawn().map_err(|err| {
         MlrcError::new(
             ErrorCode::Io,
             format!(
@@ -571,19 +592,56 @@ pub async fn install_installer(
         )
     })?;
 
-    // The installer's own output is the only explanation when it fails, so keep all
-    // of it on disk rather than only the last few lines in an error.
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let log_path = root
-        .logs_dir()
-        .join(format!("installer-{}.log", installer.id));
-    let _ = std::fs::write(&log_path, &combined);
+    // Drain the pipes while the installer runs: they would otherwise fill up and
+    // block it, and a silent four-minute install looks like a hang.
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        readers.push(pump(stdout, std::sync::Arc::clone(&log)));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        readers.push(pump(stderr, std::sync::Arc::clone(&log)));
+    }
 
-    if !output.status.success() {
+    sink.emit(Event::Note {
+        message: format!(
+            "running the {} installer; log: {}",
+            installer.flavour.as_str(),
+            log_path.display()
+        ),
+    });
+
+    let started = std::time::Instant::now();
+    let mut heartbeat = 0u64;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(err) => {
+                return Err(MlrcError::new(
+                    ErrorCode::Io,
+                    format!("cannot wait for the installer: {err}"),
+                ))
+            }
+        }
+
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= 15 && elapsed / 15 > heartbeat {
+            heartbeat = elapsed / 15;
+            sink.emit(Event::Note {
+                message: format!("installer still running ({elapsed}s)"),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    };
+
+    for reader in readers {
+        let _ = reader.join();
+    }
+
+    // The installer's own output is the only explanation when it fails.
+    let combined = std::fs::read_to_string(&log_path).unwrap_or_default();
+
+    if !status.success() {
         let lines: Vec<&str> = combined
             .lines()
             .filter(|line| !line.trim().is_empty())
@@ -594,7 +652,7 @@ pub async fn install_installer(
             format!(
                 "the {} installer failed for {mc} (exit {})",
                 installer.flavour.as_str(),
-                output.status.code().unwrap_or(-1)
+                status.code().unwrap_or(-1)
             ),
         )
         .with("output", tail)
@@ -708,6 +766,20 @@ fn java_for_installer(root: &DataRoot, policy: &JavaPolicy, required: u32) -> Ml
         ),
     )
     .with("major", required as u64))
+}
+
+/// Copies a child process stream into the installer log as it arrives.
+fn pump(
+    stream: impl Read + Send + 'static,
+    log: Arc<Mutex<std::fs::File>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        for line in BufReader::new(stream).lines().map_while(Result::ok) {
+            if let Ok(mut file) = log.lock() {
+                let _ = writeln!(file, "{line}");
+            }
+        }
+    })
 }
 
 fn copy_tree(from: &Path, to: &Path) -> MlrcResult<()> {

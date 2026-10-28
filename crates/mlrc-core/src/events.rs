@@ -38,6 +38,11 @@ pub enum Event {
         code: String,
         message: String,
     },
+    /// Neutral progress, e.g. "running the installer" plus a heartbeat. Not a
+    /// warning and not a result; a front-end may show it or ignore it.
+    Note {
+        message: String,
+    },
     Done {
         message: String,
         ok: bool,

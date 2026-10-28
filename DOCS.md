@@ -310,7 +310,11 @@ bits are applied on Unix.
 - `-Djava.io.tmpdir` points at `data/tmp`: loader remapping and image caches then stay
   inside the portable tree instead of the system temp directory.
 - Variables are `${name}` placeholders; unknown ones are left visible rather than
-  silently emptied.
+  silently emptied. `library_directory` and `classpath_separator` are provided because
+  Forge and NeoForge build their module path out of them - without them the literal
+  `${library_directory}` reaches the JVM and the bootstrap cannot load its modules.
+- When the machine needs a proxy, the game JVM gets `-Dhttp(s).proxy*` too; otherwise
+  it connects directly while the launcher's own downloads go through the proxy.
 
 Feature flags (`is_demo_user`, `has_custom_resolution`, quick-play variants) are set by
 the launcher before rule evaluation, never inferred from the version.
@@ -424,6 +428,18 @@ vanilla libraries are hardlinked in from the parent version instead of being sto
 twice. The installer's own output is kept at `data/logs/installer-<id>.log`, because
 it is the only explanation when one fails.
 
+Three details make that workable rather than merely possible:
+
+- The installer's libraries are downloaded *first*, by our client, from the configured
+  source. NeoForge's installer ignores `--mirror`, so on a network where its maven is
+  blocked it would otherwise fail no matter what.
+- The child JVM inherits the proxy the launcher detected (environment variables first,
+  then the Windows internet settings). A JVM that does not know about the proxy hangs
+  on every download while the launcher itself is fine.
+- Progress is reported as it happens: the note names the log file, and a heartbeat
+  every 15 seconds says the installer is still working. Its output is streamed to that
+  log, not buffered until exit.
+
 Either way the resulting id is what `launch` and `uninstall` take, and launch resolves
 the chain from cached documents, so a loader install starts without network access.
 
@@ -522,7 +538,8 @@ including in `-v` logs and `--dry-run` command lines.
 | A shared public client id is revoked | configurable client id; a self-registered Azure application is documented |
 | Mojang changes the metadata shape | every field defaulted, unknown fields ignored, `doctor` reports unhealthy pieces |
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
-| A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
+| A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer's libraries are pre-downloaded through the configured source, the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
+| A machine needs a proxy | child JVMs (installers and the game) get `-Dhttp(s).proxy*` from the environment or the Windows settings |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
 | Hardlinks are unsupported (FAT32, SMB) | degrade to copy and warn |
 | Non-ASCII text creeps into sources | CI gate |

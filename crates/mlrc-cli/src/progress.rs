@@ -56,6 +56,13 @@ impl EventSink for ProgressSink {
             Event::Warning { code, message } => {
                 eprintln!("warning [{code}]: {message}");
             }
+            // A note arrives while a progress line may be on screen.
+            Event::Note { message } if self.live => {
+                if self.printed.swap(false, Ordering::Relaxed) {
+                    println!();
+                }
+                eprintln!("{message}");
+            }
             _ => {}
         }
     }

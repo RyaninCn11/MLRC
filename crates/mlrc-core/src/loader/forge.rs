@@ -4,9 +4,12 @@
 //! document. MLRC does not reimplement their processors; it runs the official
 //! installer against a staging launcher directory and then adopts what it produced.
 
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
+use crate::events::EventSink;
 use crate::fetch::{HttpClient, Mirror};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +160,157 @@ fn neoforge_prefix(mc: &str) -> Option<String> {
 
 /// Metadata is small and must not hang: a maven host that accepts the connection and
 /// then goes quiet would otherwise hold the command for the full client timeout.
+/// Pre-downloads everything the installer would fetch from its own maven.
+///
+/// NeoForge's installer ignores `--mirror` for library downloads, so on a network
+/// where `maven.neoforged.net` is unreachable the install can never finish. The
+/// installer skips files that already exist, which makes seeding it ourselves the
+/// one reliable way to route those downloads through the configured mirror.
+pub async fn preseed_libraries(
+    client: &HttpClient,
+    stage: &Path,
+    installer_jar: &Path,
+    sink: &dyn EventSink,
+) -> MlrcResult<usize> {
+    let artifacts = read_install_manifest(installer_jar)?;
+    if artifacts.is_empty() {
+        return Ok(0);
+    }
+
+    sink.emit(crate::events::Event::Note {
+        message: format!("pre-downloading {} installer libraries", artifacts.len()),
+    });
+
+    let mut downloaded = 0;
+    for (path, url, sha1) in artifacts {
+        let target = stage.join("libraries").join(&path);
+        if target.is_file() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let bytes = match installer_bytes(client, &url).await {
+            Ok(bytes) => bytes,
+            // A missing optional artifact must not abort: the installer decides.
+            Err(_) => continue,
+        };
+
+        if !sha1.is_empty() {
+            let actual = sha1_of(&bytes);
+            if actual != sha1 {
+                return Err(MlrcError::new(
+                    ErrorCode::HashMismatch,
+                    format!("hash mismatch for installer library {}", path.display()),
+                )
+                .with("expected", sha1)
+                .with("actual", actual));
+            }
+        }
+
+        std::fs::write(&target, bytes)?;
+        downloaded += 1;
+    }
+
+    Ok(downloaded)
+}
+
+/// `(path, url, sha1)` for every library either manifest mentions.
+fn read_install_manifest(jar: &Path) -> MlrcResult<Vec<(PathBuf, String, String)>> {
+    let file = std::fs::File::open(jar).map_err(|err| {
+        MlrcError::new(
+            ErrorCode::Io,
+            format!("cannot open {}: {err}", jar.display()),
+        )
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| {
+        MlrcError::new(
+            ErrorCode::Io,
+            format!("cannot read installer {}: {err}", jar.display()),
+        )
+    })?;
+
+    let mut seen = BTreeSet::new();
+    let mut artifacts = Vec::new();
+
+    for name in ["install_profile.json", "version.json"] {
+        let Ok(mut entry) = archive.by_name(name) else {
+            continue;
+        };
+        let mut text = String::new();
+        use std::io::Read;
+        if entry.read_to_string(&mut text).is_err() {
+            continue;
+        }
+        drop(entry);
+
+        let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        let Some(libraries) = document.get("libraries").and_then(|value| value.as_array()) else {
+            continue;
+        };
+
+        for library in libraries {
+            let Some((path, url, sha1)) = library_artifact(library) else {
+                continue;
+            };
+            if seen.insert(path.clone()) {
+                artifacts.push((PathBuf::from(path), url, sha1));
+            }
+        }
+    }
+
+    Ok(artifacts)
+}
+
+fn library_artifact(library: &serde_json::Value) -> Option<(String, String, String)> {
+    if let Some(artifact) = library.pointer("/downloads/artifact") {
+        let path = artifact.get("path")?.as_str()?.to_string();
+        let url = artifact.get("url")?.as_str()?.to_string();
+        let sha1 = artifact
+            .get("sha1")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return Some((path, url, sha1));
+    }
+
+    // Maven-coordinate form: `name` plus a base `url`.
+    let base = library.get("url")?.as_str()?;
+    let name = library.get("name")?.as_str()?;
+    let path = maven_path(name)?;
+    Some((path.clone(), format!("{base}{path}"), String::new()))
+}
+
+fn maven_path(coordinate: &str) -> Option<String> {
+    let mut parts = coordinate.split(':');
+    let group = parts.next()?;
+    let artifact = parts.next()?;
+    let version = parts.next()?;
+    let classifier = parts.next();
+    let file = match classifier {
+        Some(classifier) => format!("{artifact}-{version}-{classifier}.jar"),
+        None => format!("{artifact}-{version}.jar"),
+    };
+    Some(format!(
+        "{}/{artifact}/{version}/{file}",
+        group.replace('.', "/")
+    ))
+}
+
+fn sha1_of(bytes: &[u8]) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 async fn fetch_metadata(client: &HttpClient, flavour: Flavour) -> MlrcResult<Vec<u8>> {
     let url = flavour.metadata_url();
     match client
