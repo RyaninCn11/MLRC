@@ -15,6 +15,7 @@ pub mod error;
 pub mod events;
 pub mod fetch;
 pub mod install;
+pub mod instance;
 pub mod java;
 pub mod launch;
 pub mod loader;

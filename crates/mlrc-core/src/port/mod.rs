@@ -104,6 +104,10 @@ impl DataRoot {
         self.root.join("logs")
     }
 
+    pub fn instances_dir(&self) -> PathBuf {
+        self.root.join("instances")
+    }
+
     /// Scratch space for the game's JVM.
     ///
     /// Passed as `-Djava.io.tmpdir`: some loaders write remapped jars and image

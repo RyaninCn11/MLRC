@@ -20,9 +20,9 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
 - [x] Fabric loader: `mlrc install <mc> --loader fabric`
+- [x] Named instances, each with its own game directory
 - [ ] Microsoft account login
 - [ ] Quilt / NeoForge loaders
-- [ ] Per-instance game directories
 - [ ] Graphical front-end
 
 ## Requirements
@@ -63,15 +63,25 @@ mlrc --mirror bmclapi install 1.12.2
 
 `--mirror auto` (the default) times both sources once and remembers the faster one.
 
+Modded, or want separate worlds? Every version shares one game directory by default;
+an instance gives you its own:
+
+```bash
+mlrc install 1.21.1 --loader fabric
+mlrc instance create survival --version fabric-loader-0.20.1-1.21.1
+mlrc launch --instance survival
+```
+
 ### Commands
 
 | Command | Purpose |
 |---|---|
-| `mlrc install <version>` | Install a version; `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
-| `mlrc launch [<version>]` | Start the game; `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
+| `mlrc install <version>` | Install a version; `--loader fabric`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
+| `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
+| `mlrc instance create \| list \| remove` | Named game directories bound to a version |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |

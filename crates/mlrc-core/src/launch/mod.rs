@@ -57,11 +57,12 @@ pub fn build(
     root: &DataRoot,
     identity: &Identity,
     java: &JavaInstallation,
+    game_dir: &Path,
     options: &LaunchOptions,
 ) -> MlrcResult<LaunchPlan> {
     let version_dir = root.version_dir(&version.id);
     let natives_dir = version_dir.join("natives");
-    let game_dir = root.minecraft_dir();
+    let game_dir = game_dir.to_path_buf();
     std::fs::create_dir_all(&game_dir)?;
 
     let mut features: Vec<&str> = Vec::new();

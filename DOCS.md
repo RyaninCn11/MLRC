@@ -166,6 +166,9 @@ per-user directory behind the user's back.
     |   |-- objects.txt                    hashes this version references
     |   `-- installed.json                 install state
     |-- minecraft/                         shared game directory
+    |-- instances/<name>/
+    |   |-- instance.toml                  name and version
+    |   `-- minecraft/                     that instance's game directory
     `-- logs/
 ```
 
@@ -173,7 +176,10 @@ Notes:
 
 - `cache/objects` and `versions/<id>` should share a volume for hardlinks; otherwise
   the store copies and reports a warning.
-- `minecraft/` is the game directory: saves, options, resource packs, mods.
+- `versions/` holds the immutable, shareable part; a game directory holds the mutable
+  part (saves, options, resource packs, mods).
+- A launch without `--instance` uses `data/minecraft/`; with `--instance <name>` it
+  uses `data/instances/<name>/minecraft/` and the version recorded in that instance.
 - Nothing is written outside `data/`.
 
 ---
@@ -329,6 +335,23 @@ Offline identity derives the UUID as MD5 of `OfflinePlayer:<name>` with the RFC 
 version-3 and variant bits applied. The access token is a placeholder; online-mode
 servers reject it, which is the point. `--uuid` is passed without dashes.
 
+### 8.5 Game directory and instances
+
+The game directory is the mutable part of a setup: saves, options, resource packs and
+mods. By default it is `data/minecraft/` and every version shares it.
+
+An instance is a named game directory bound to one version:
+
+```
+mlrc instance create survival --version 1.21.1
+mlrc launch --instance survival
+```
+
+Creating one copies nothing. The version store, libraries and assets stay shared, so
+ten instances cost ten game directories rather than ten installations; only
+`data/instances/<name>/minecraft/` and a one-line `instance.toml` are new. Removing an
+instance deletes that directory and leaves every version installed.
+
 ---
 
 ## 9. Version documents
@@ -394,12 +417,14 @@ releases, and a launcher that fails on the unknown is a broken launcher.
 ### 10.1 Commands
 
 ```
-mlrc install <version> [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
-mlrc launch [<version>] [--offline] [--username <n>] [--width N] [--height N]
-            [--dry-run] [-- <game args>]
+mlrc install <version> [--loader fabric[:<version>]] [--java=auto|install|skip]
+             [--yes] [--dry-run] [--threads N]
+mlrc launch [<version>] [--instance <name>] [--offline] [--username <n>]
+            [--width N] [--height N] [--dry-run] [-- <game args>]
 mlrc list [--all] [--json]
 mlrc use <version>
 mlrc uninstall <version>
+mlrc instance create <name> --version <id> | list | remove <name>
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list

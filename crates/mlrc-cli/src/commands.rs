@@ -17,6 +17,7 @@ use mlrc_core::install::{
     preview_loader as run_preview_loader, resolve_document as run_resolve_document, InstallOptions,
     JavaMode as CoreJavaMode, JavaPolicy, Preview,
 };
+use mlrc_core::instance::Instance;
 use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
 use mlrc_core::meta::manifest::VersionManifest;
@@ -28,7 +29,8 @@ use mlrc_core::port::state::{self, InstalledState};
 use mlrc_core::port::DataRoot;
 
 use crate::cli::{
-    CacheCommand, Cli, Command, ConfigCommand, JavaCommand, JavaMode as CliJavaMode, MirrorArg,
+    CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
+    JavaMode as CliJavaMode, MirrorArg,
 };
 use crate::progress::ProgressSink;
 use crate::render::Out;
@@ -66,6 +68,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
             width,
             height,
             dry_run,
+            instance,
             game_args,
         } => {
             cmd_launch(
@@ -77,12 +80,14 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
                 *width,
                 *height,
                 *dry_run,
+                instance.as_deref(),
                 game_args,
             )
             .await
         }
         Command::Uninstall { version } => cmd_uninstall(cli, out, version),
         Command::Cache { command } => cmd_cache(cli, out, command),
+        Command::Instance { command } => cmd_instance(cli, out, command),
         Command::Java { command } => cmd_java(cli, out, command).await,
         Command::Auth { .. } => Err(not_implemented("auth", "M5")),
     }
@@ -605,6 +610,7 @@ async fn cmd_launch(
     width: Option<u32>,
     height: Option<u32>,
     dry_run: bool,
+    instance: Option<&str>,
     game_args: &[String],
 ) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
@@ -615,15 +621,31 @@ async fn cmd_launch(
     let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
     let client = HttpClient::new(mirror)?;
 
+    let instance = match instance {
+        Some(name) => Some(Instance::load(&root, name)?.ok_or_else(|| {
+            MlrcError::new(ErrorCode::Usage, format!("no such instance: {name}"))
+                .with("instance", name.to_string())
+        })?),
+        None => None,
+    };
+
     let id = match version {
         Some(id) => id.to_string(),
-        None if !cfg.general.default_version.is_empty() => cfg.general.default_version.clone(),
-        None => {
-            return Err(MlrcError::new(
-                ErrorCode::Usage,
-                "no version given and no default set; run `mlrc use <version>`",
-            ))
-        }
+        None => match &instance {
+            Some(instance) => instance.version.clone(),
+            None if !cfg.general.default_version.is_empty() => cfg.general.default_version.clone(),
+            None => {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no version given and no default set; run `mlrc use <version>`",
+                ))
+            }
+        },
+    };
+
+    let game_dir = match &instance {
+        Some(instance) => Instance::game_dir(&root, &instance.name),
+        None => root.minecraft_dir(),
     };
 
     match InstalledState::read(&root.version_dir(&id).join(InstalledState::FILE_NAME))? {
@@ -683,7 +705,9 @@ async fn cmd_launch(
         extra_game_args: game_args.to_vec(),
         jvm_args: Vec::new(),
     };
-    let plan = launch::build(&document, &plan, &root, &identity, &java, &options)?;
+    let plan = launch::build(
+        &document, &plan, &root, &identity, &java, &game_dir, &options,
+    )?;
 
     if dry_run {
         print_launch(out, &plan);
@@ -877,6 +901,99 @@ fn subdirs(dir: &std::path::Path) -> Vec<String> {
         .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false))
         .map(|entry| entry.file_name().to_string_lossy().to_string())
         .collect()
+}
+
+fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<()> {
+    let root = DataRoot::resolve(cli.data_dir.as_deref())?;
+    root.ensure()?;
+
+    match command {
+        InstanceCommand::Create { name, version } => {
+            // An instance only owns its game directory; the version it points at has
+            // to exist already.
+            match InstalledState::read(&root.version_dir(version).join(InstalledState::FILE_NAME))?
+            {
+                Some(state) if state.complete => {}
+                Some(_) => {
+                    return Err(MlrcError::new(
+                        ErrorCode::VersionIncomplete,
+                        format!("version {version} is incomplete; run `mlrc install {version}`"),
+                    ))
+                }
+                None => {
+                    return Err(MlrcError::new(
+                        ErrorCode::VersionUnknown,
+                        format!("version {version} is not installed; run `mlrc install {version}`"),
+                    ))
+                }
+            }
+
+            if Instance::load(&root, name)?.is_some() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    format!("instance {name} already exists"),
+                )
+                .with("instance", name.clone()));
+            }
+
+            let instance = Instance::create(&root, name, version)?;
+            let game_dir = Instance::game_dir(&root, &instance.name);
+
+            out.human(format!(
+                "created instance {} (version {}, game dir {})",
+                instance.name,
+                instance.version,
+                game_dir.display()
+            ));
+            out.json_event(json!({
+                "schema": 1,
+                "event": "instance",
+                "name": instance.name,
+                "version": instance.version,
+                "game_dir": game_dir.display().to_string(),
+            }));
+        }
+        InstanceCommand::List => {
+            let instances = Instance::list(&root)?;
+
+            if out.is_json() {
+                let items: Vec<_> = instances
+                    .iter()
+                    .map(|instance| {
+                        json!({
+                            "name": instance.name,
+                            "version": instance.version,
+                            "game_dir": Instance::game_dir(&root, &instance.name).display().to_string(),
+                        })
+                    })
+                    .collect();
+                out.json_event(json!({"schema": 1, "event": "instances", "instances": items}));
+                return Ok(());
+            }
+
+            if instances.is_empty() {
+                out.human("no instances");
+                return Ok(());
+            }
+
+            out.human(format!(" {:<24}{}", "NAME", "VERSION"));
+            for instance in &instances {
+                out.human(format!(" {:<24}{}", instance.name, instance.version));
+            }
+        }
+        InstanceCommand::Remove { name } => {
+            if !Instance::remove(&root, name)? {
+                return Err(
+                    MlrcError::new(ErrorCode::Usage, format!("no such instance: {name}"))
+                        .with("instance", name.clone()),
+                );
+            }
+            out.human(format!("removed instance {name}"));
+            out.json_event(json!({"schema": 1, "event": "done", "removed_instance": name}));
+        }
+    }
+
+    Ok(())
 }
 
 async fn cmd_java(cli: &Cli, out: &Out, command: &JavaCommand) -> MlrcResult<()> {

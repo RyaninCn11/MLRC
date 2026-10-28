@@ -97,9 +97,19 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
 
+        /// Use the game directory and version of a named instance
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+
         /// Extra arguments for the game, after `--`
         #[arg(last = true)]
         game_args: Vec<String>,
+    },
+
+    /// Manage named game directories
+    Instance {
+        #[command(subcommand)]
+        command: InstanceCommand,
     },
 
     /// List installed versions
@@ -151,6 +161,20 @@ pub enum JavaMode {
     Install,
     /// Continue without the runtime; launching will fail later
     Skip,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstanceCommand {
+    /// Create an instance for an installed version
+    Create {
+        name: String,
+        #[arg(long)]
+        version: String,
+    },
+    /// List instances
+    List,
+    /// Remove an instance and its game directory
+    Remove { name: String },
 }
 
 #[derive(Debug, Subcommand)]
