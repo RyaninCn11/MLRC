@@ -164,6 +164,7 @@ xmx = "2G"          # maximum heap; a --memory flag or an instance overrides it
 [general]
 default_version = ""
 mirror = "auto"     # auto | official | bmclapi
+proxy = "auto"      # auto | none | host:port; also passed to the game's JVM
 game_language = ""  # e.g. zh_cn; empty leaves the game's own setting
 ```
 

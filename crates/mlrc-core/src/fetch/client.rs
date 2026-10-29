@@ -13,18 +13,37 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
+    /// Uses the system/environment proxy, which is what reqwest does by default.
     pub fn new(mirror: Mirror) -> MlrcResult<Self> {
-        let inner = reqwest::Client::builder()
+        Self::with_proxy(mirror, "auto")
+    }
+
+    /// `setting` is `general.proxy`: `auto`, `none` or `host:port`.
+    pub fn with_proxy(mirror: Mirror, setting: &str) -> MlrcResult<Self> {
+        let mut builder = reqwest::Client::builder()
             .user_agent(format!("mlrc/{}", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|err| {
-                MlrcError::new(
-                    ErrorCode::Network,
-                    format!("cannot build http client: {err}"),
-                )
-            })?;
+            .timeout(Duration::from_secs(120));
+
+        builder = match crate::fetch::proxy::choice(setting)? {
+            crate::fetch::proxy::Choice::Auto => builder,
+            // A proxy that is configured but dead breaks every request, and there is
+            // no way to notice from inside reqwest; this is the escape hatch.
+            crate::fetch::proxy::Choice::Direct => builder.no_proxy(),
+            crate::fetch::proxy::Choice::Manual(proxy) => {
+                let url = format!("http://{}:{}", proxy.host, proxy.port);
+                builder.proxy(reqwest::Proxy::all(&url).map_err(|err| {
+                    MlrcError::new(ErrorCode::Config, format!("cannot use proxy {url}: {err}"))
+                })?)
+            }
+        };
+
+        let inner = builder.build().map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Network,
+                format!("cannot build http client: {err}"),
+            )
+        })?;
         Ok(Self { inner, mirror })
     }
 

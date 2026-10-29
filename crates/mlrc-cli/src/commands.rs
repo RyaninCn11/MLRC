@@ -365,6 +365,7 @@ async fn cmd_install(
         &InstallOptions {
             threads,
             java: policy.clone(),
+            proxy: cfg.general.proxy.clone(),
         },
         &sink,
     )
@@ -421,6 +422,7 @@ async fn cmd_install(
                         mode: CoreJavaMode::Install,
                         ..policy
                     },
+                    proxy: cfg.general.proxy.clone(),
                 },
                 &sink,
             )
@@ -615,7 +617,10 @@ async fn open_client(cli: &Cli, root: &DataRoot) -> MlrcResult<(HttpClient, Mirr
         }
     };
 
-    Ok((HttpClient::new(resolved)?, resolved))
+    Ok((
+        HttpClient::with_proxy(resolved, &cfg.general.proxy)?,
+        resolved,
+    ))
 }
 
 /// BMCLAPI's terms require the download UI to name the source.
@@ -653,7 +658,7 @@ async fn cmd_launch(
 
     // No probing here: launch must work without touching the network.
     let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
-    let client = HttpClient::new(mirror)?;
+    let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
 
     let instance = match instance {
         Some(name) => Some(Instance::load(&root, name)?.ok_or_else(|| {
@@ -763,6 +768,7 @@ async fn cmd_launch(
         jvm_args: jvm_args.to_vec(),
         memory: heap,
         initial_memory: initial_heap,
+        proxy: cfg.general.proxy.clone(),
     };
     let plan = launch::build(
         &document, &plan, &root, &identity, &java, &game_dir, &options,
@@ -1029,7 +1035,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
         InstanceCommand::Import { file, name, java } => {
             let cfg = Config::load(&root.config_path())?;
             let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
-            let client = HttpClient::new(mirror)?;
+            let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
             let mode = match java {
                 CliJavaMode::Auto => CoreJavaMode::Auto,
                 CliJavaMode::Install => CoreJavaMode::Install,
@@ -1042,6 +1048,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                     allow_host: cfg.java.custom,
                     host_path: cfg.java.path.clone(),
                 },
+                proxy: cfg.general.proxy.clone(),
             };
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
@@ -1132,7 +1139,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
     root.ensure()?;
     let cfg = Config::load(&root.config_path())?;
     let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
-    let client = HttpClient::new(mirror)?;
+    let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
 
     match command {
         ModCommand::Search {

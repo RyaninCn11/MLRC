@@ -34,6 +34,8 @@ pub struct LaunchOptions {
     pub memory: Option<String>,
     /// `-Xms` value, already normalised; `None` leaves Java's default alone.
     pub initial_memory: Option<String>,
+    /// `general.proxy`: the game needs the same proxy the launcher uses.
+    pub proxy: String,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +186,7 @@ pub fn build(
         .iter()
         .any(|argument| argument.starts_with("-Dhttp.proxyHost"))
     {
-        let mut with_proxy = crate::fetch::proxy::java_args();
+        let mut with_proxy = crate::fetch::proxy::java_args_for(&options.proxy);
         with_proxy.append(&mut jvm);
         jvm = with_proxy;
     }

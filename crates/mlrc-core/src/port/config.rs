@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 8] = [
+pub const KEYS: [&str; 9] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -15,6 +15,7 @@ pub const KEYS: [&str; 8] = [
     "general.default_version",
     "general.mirror",
     "general.game_language",
+    "general.proxy",
     "curseforge.api_key",
 ];
 
@@ -62,7 +63,7 @@ pub struct JavaConfig {
     pub xmx: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
     /// Set by `mlrc use <version>`; used by a bare `mlrc launch`.
@@ -71,6 +72,20 @@ pub struct GeneralConfig {
     /// In-game language applied to `options.txt` before launch, e.g. `zh_cn`.
     /// Empty means "leave whatever the game has".
     pub game_language: String,
+    /// `auto` (system settings), `none` (always direct) or `host:port`. Applies to the
+    /// launcher's own downloads and to every JVM it starts.
+    pub proxy: String,
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            default_version: String::new(),
+            mirror: Mirror::Auto,
+            game_language: String::new(),
+            proxy: "auto".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +155,14 @@ impl Config {
             "general.default_version" => self.general.default_version.clone(),
             "general.mirror" => self.general.mirror.as_str().to_string(),
             "general.game_language" => self.general.game_language.clone(),
+            "general.proxy" => {
+                let proxy = self.general.proxy.trim();
+                if proxy.is_empty() {
+                    "auto".to_string()
+                } else {
+                    proxy.to_string()
+                }
+            }
             "curseforge.api_key" => self.curseforge.api_key.clone(),
             other => return Err(unknown_key(other)),
         })
@@ -201,6 +224,16 @@ impl Config {
                     value.to_string()
                 };
             }
+            "general.proxy" => {
+                // Validation happens here so a typo is caught by `config set`, not by
+                // the next download.
+                crate::fetch::proxy::choice(value)?;
+                self.general.proxy = if value.trim().is_empty() {
+                    "auto".to_string()
+                } else {
+                    value.trim().to_string()
+                };
+            }
             other => return Err(unknown_key(other)),
         }
         Ok(())
@@ -219,6 +252,7 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
         }
         "general.mirror" | "mirror" => "general.mirror",
         "general.game_language" | "gameLanguage" | "gamelanguage" => "general.game_language",
+        "general.proxy" | "proxy" => "general.proxy",
         "curseforge.api_key" | "curseforge.apiKey" | "curseforgeApiKey" | "curseforgeKey" => {
             "curseforge.api_key"
         }

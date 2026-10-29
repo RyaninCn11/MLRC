@@ -58,6 +58,8 @@ impl JavaPolicy {
 pub struct InstallOptions {
     pub threads: usize,
     pub java: JavaPolicy,
+    /// `general.proxy`: passed to the installer's JVM, which does its own downloads.
+    pub proxy: String,
 }
 
 impl Default for InstallOptions {
@@ -65,6 +67,7 @@ impl Default for InstallOptions {
         Self {
             threads: 8,
             java: JavaPolicy::default(),
+            proxy: "auto".to_string(),
         }
     }
 }
@@ -553,7 +556,7 @@ pub async fn install_installer(
     command
         // The installer creates temp directories; keep them inside the data tree.
         .arg(format!("-Djava.io.tmpdir={}", root.tmp_dir().display()))
-        .args(crate::fetch::proxy::java_args())
+        .args(crate::fetch::proxy::java_args_for(&options.proxy))
         .arg("-jar")
         .arg(&installer_jar)
         .arg("--installClient")

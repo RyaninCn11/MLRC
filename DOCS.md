@@ -261,6 +261,23 @@ Observed behaviour of BMCLAPI:
 and stores the winner in `config.toml`. BMCLAPI's terms require naming the source in
 the download UI, so a run through it prints the source and emits a `source` event.
 
+### 6.5 Proxy
+
+`general.proxy` is `auto` (environment variables, then the Windows internet settings),
+`none` (always direct) or an explicit `host:port`.
+
+It applies to both halves of the launcher because they fail separately:
+
+- The HTTP client. reqwest already honours the system proxy, which is right until the
+  proxy is running but not forwarding: then every request fails while a direct
+  connection would have worked, and nothing in the error says why.
+- Child JVMs. A JVM knows nothing about the system proxy; loader installers do their
+  own downloads and the game talks to Mojang, so both get `-Dhttp(s).proxyHost` from
+  the same setting. `none` therefore also means the game ignores the system proxy.
+
+`mlrc doctor` reports the network, which is what makes a misconfigured proxy obvious
+rather than mysterious.
+
 ---
 
 ## 7. Java runtimes
@@ -599,7 +616,7 @@ The two sources differ in ways the launcher has to absorb:
 | Mojang changes the metadata shape | every field defaulted, unknown fields ignored, `doctor` reports unhealthy pieces |
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
 | A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer's libraries are pre-downloaded through the configured source, the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
-| A machine needs a proxy | child JVMs (installers and the game) get `-Dhttp(s).proxy*` from the environment or the Windows settings |
+| A machine needs a proxy | child JVMs (installers and the game) get `-Dhttp(s).proxy*` from `general.proxy`; `none` bypasses a broken proxy without touching the environment |
 | Modrinth is unreachable or changes its shape | failures surface as `E_NET_HTTP` / `E_META_SHAPE` with the URL; nothing is written into `mods/` unless the SHA1 matches |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
 | Hardlinks are unsupported (FAT32, SMB) | degrade to copy and warn |
