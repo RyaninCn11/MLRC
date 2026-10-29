@@ -21,6 +21,7 @@ use mlrc_core::install::{
 use mlrc_core::instance::Instance;
 use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
+use mlrc_core::loader::fabric::Family;
 use mlrc_core::loader::forge::{self, Flavour};
 use mlrc_core::meta::manifest::VersionManifest;
 use mlrc_core::meta::rule::Env;
@@ -321,8 +322,8 @@ async fn cmd_install(
     if dry_run {
         // Installer-based loaders produce their file list while running, so there is
         // nothing to preview beyond the version that would be installed.
-        if let Some(name) = loader_name.filter(|name| *name != "fabric") {
-            let flavour = Flavour::parse(name).expect("loader names are validated");
+        if let Some(name) = loader_name.filter(|name| Flavour::parse(name).is_some()) {
+            let flavour = Flavour::parse(name).expect("checked by the filter");
             let installer = forge::resolve(&client, flavour, version, loader_version).await?;
             out.human(format!("version      : {}", installer.id));
             out.human(format!("installer    : {}", installer.url));
@@ -331,7 +332,10 @@ async fn cmd_install(
         }
 
         let preview = match loader_name {
-            Some(_) => run_preview_loader(&client, &root, version, loader_version).await?,
+            Some(name) => {
+                let family = family_for(name);
+                run_preview_loader(&client, &root, version, family, loader_version).await?
+            }
             None => run_preview(&client, &root, version).await?,
         };
         print_plan(out, &preview, &root);
@@ -452,7 +456,7 @@ async fn cmd_install(
     Ok(())
 }
 
-const SUPPORTED_LOADERS: &[&str] = &["fabric", "forge", "neoforge"];
+const SUPPORTED_LOADERS: &[&str] = &["fabric", "quilt", "forge", "neoforge"];
 
 /// Splits `fabric` / `fabric:0.16.9` and rejects loaders the engine does not know.
 fn parse_loader(spec: Option<&str>) -> MlrcResult<(Option<&str>, Option<&str>)> {
@@ -489,16 +493,22 @@ async fn install_once(
     sink: &ProgressSink,
 ) -> MlrcResult<InstalledState> {
     match loader {
-        Some("fabric") => {
-            run_install_loader(client, root, version, loader_version, options, sink).await
-        }
-        Some(name) => {
-            let flavour = Flavour::parse(name).expect("loader names are validated");
+        Some(name) if Flavour::parse(name).is_some() => {
+            let flavour = Flavour::parse(name).expect("checked by the guard");
             let installer = forge::resolve(client, flavour, version, loader_version).await?;
             run_install_installer(client, root, version, &installer, options, sink).await
         }
+        Some(name) => {
+            let family = family_for(name);
+            run_install_loader(client, root, version, family, loader_version, options, sink).await
+        }
         None => run_install(client, root, version, options, sink).await,
     }
+}
+
+/// The meta-API loaders share one code path; anything else is an installer.
+fn family_for(name: &str) -> Family {
+    Family::parse(name).unwrap_or(Family::Fabric)
 }
 
 fn print_plan(out: &Out, preview: &Preview, root: &DataRoot) {
@@ -1605,11 +1615,11 @@ fn mod_platform(
         platform.loader = loader.to_string();
     }
 
-    if !["fabric", "forge", "neoforge"].contains(&platform.loader.as_str()) {
+    if !["fabric", "quilt", "forge", "neoforge"].contains(&platform.loader.as_str()) {
         return Err(MlrcError::new(
             ErrorCode::Usage,
             format!(
-                "unknown loader {} (expected fabric, forge or neoforge)",
+                "unknown loader {} (expected fabric, quilt, forge or neoforge)",
                 platform.loader
             ),
         ));

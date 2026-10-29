@@ -436,10 +436,15 @@ written straight to their destination, still retried, just unverified.
 
 Two mechanisms behind one command.
 
-Fabric publishes a version document: `mlrc install <mc> --loader fabric` fetches the
-profile from `meta.fabricmc.net`, caches it under the id Fabric chose
-(`fabric-loader-<loader>-<mc>`), and lets `inheritsFrom` pull in the vanilla client,
-libraries and assets.
+Fabric and Quilt publish a version document: `mlrc install <mc> --loader fabric|quilt`
+fetches the profile from the loader's meta API, caches it under the id the loader chose
+(`fabric-loader-<loader>-<mc>`, `quilt-loader-<loader>-<mc>`), and lets `inheritsFrom`
+pull in the vanilla client, libraries and assets.
+
+The two are one code path: same payload shape, different host and API version
+(`meta.fabricmc.net/v2`, `meta.quiltmc.org/v3`). Fabric flags stable releases, Quilt
+only says so in the version string, so the newest loader is picked by preferring a
+release and skipping `-beta`/`-alpha` names.
 
 Forge and NeoForge are installers. They patch the vanilla client through a processor
 chain that a launcher cannot sensibly reimplement, so MLRC stages a launcher-shaped
@@ -477,7 +482,7 @@ releases, and a launcher that fails on the unknown is a broken launcher.
 ### 10.1 Commands
 
 ```
-mlrc install <version> [--loader fabric|forge|neoforge[:<version>]]
+mlrc install <version> [--loader fabric|quilt|forge|neoforge[:<version>]]
              [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
 mlrc launch [<version>] [--instance <name>] [--lang <code>] [--memory <size>]
             [--jvm-arg <arg>] [--offline] [--username <n>]

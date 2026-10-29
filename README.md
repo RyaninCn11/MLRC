@@ -19,14 +19,14 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Launch the game offline with a derived player identity
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
-- [x] Fabric, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|forge|neoforge`
+- [x] Fabric, Quilt, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|quilt|forge|neoforge`
 - [x] Named instances, each with its own game directory
 - [x] Set the in-game language before launch (`--lang zh_cn`)
 - [x] Mods from Modrinth: search, install with dependencies, update, remove, enable/disable
 - [x] Import Modrinth modpacks (`.mrpack`) as an instance
+- [x] Import CurseForge modpacks (`.zip`), the same way
 - [x] CurseForge as a second mod source, with a user-supplied API key
 - [ ] Microsoft account login
-- [ ] Quilt loader
 - [ ] Graphical front-end
 
 ## Requirements
@@ -136,7 +136,7 @@ mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
 
 | Command | Purpose |
 |---|---|
-| `mlrc install <version>` | Install a version; `--loader fabric\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
+| `mlrc install <version>` | Install a version; `--loader fabric\|quilt\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
 | `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--memory 4G`, `--jvm-arg <arg>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |

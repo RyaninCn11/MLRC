@@ -26,6 +26,8 @@ pub struct Platform {
 pub fn loader_of(id: &str) -> Option<&'static str> {
     if id.starts_with("fabric-loader") {
         Some("fabric")
+    } else if id.starts_with("quilt-loader") {
+        Some("quilt")
     } else if id.starts_with("neoforge-") {
         Some("neoforge")
     } else if id.starts_with("forge-") || id.contains("-forge-") {

@@ -103,6 +103,7 @@ pub async fn install_loader(
     client: &HttpClient,
     root: &DataRoot,
     mc: &str,
+    loader: crate::loader::fabric::Family,
     loader_version: Option<&str>,
     options: &InstallOptions,
     sink: &dyn EventSink,
@@ -110,7 +111,7 @@ pub async fn install_loader(
     root.ensure()?;
 
     let manifest = VersionManifest::load(client, root).await?;
-    let profile = crate::loader::fabric::resolve(client, mc, loader_version).await?;
+    let profile = crate::loader::fabric::resolve_family(client, loader, mc, loader_version).await?;
     VersionJson::store_cached(root, &profile.id, &profile.document)?;
 
     install_prepared(
@@ -325,11 +326,12 @@ pub async fn preview_loader(
     client: &HttpClient,
     root: &DataRoot,
     mc: &str,
+    loader: crate::loader::fabric::Family,
     loader_version: Option<&str>,
 ) -> MlrcResult<Preview> {
     root.ensure()?;
     let manifest = VersionManifest::load(client, root).await?;
-    let profile = crate::loader::fabric::resolve(client, mc, loader_version).await?;
+    let profile = crate::loader::fabric::resolve_family(client, loader, mc, loader_version).await?;
     let document = resolve_inheritance(client, root, &manifest, profile.version).await?;
     make_preview(document)
 }

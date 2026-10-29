@@ -536,6 +536,7 @@ impl CfPack {
         let id = chosen.id.trim();
         for (prefix, name) in [
             ("neoforge-", "neoforge"),
+            ("quilt-", "quilt"),
             ("fabric-", "fabric"),
             ("forge-", "forge"),
         ] {
@@ -694,17 +695,22 @@ async fn ensure_version(
     sink: &dyn EventSink,
 ) -> MlrcResult<(String, Option<String>)> {
     match loader {
-        Some(("fabric", loader_version)) => {
+        Some((family_name, loader_version))
+            if crate::loader::fabric::Family::parse(family_name).is_some() =>
+        {
+            let family =
+                crate::loader::fabric::Family::parse(family_name).expect("checked by the guard");
             let state = install_loader(
                 client,
                 root,
                 minecraft,
+                family,
                 Some(&loader_version),
                 options,
                 sink,
             )
             .await?;
-            Ok((state.id, Some("fabric".to_string())))
+            Ok((state.id, Some(family_name.to_string())))
         }
         Some((flavour_name, loader_version)) => {
             let flavour = Flavour::parse(flavour_name).ok_or_else(|| {
