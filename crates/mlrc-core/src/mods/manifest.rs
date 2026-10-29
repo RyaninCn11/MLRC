@@ -81,15 +81,21 @@ impl Manifest {
     }
 
     /// Records a mod, replacing any earlier entry for the same project.
+    ///
+    /// Files that came from a modpack have no project id, so they are matched by file
+    /// name instead; otherwise every pack file would overwrite the previous one.
     pub fn upsert(&mut self, entry: Entry) {
-        if let Some(existing) = self
-            .mods
-            .iter_mut()
-            .find(|existing| existing.project_id == entry.project_id)
-        {
-            *existing = entry;
-        } else {
-            self.mods.push(entry);
+        let slot = self.mods.iter_mut().find(|existing| {
+            if entry.project_id.is_empty() {
+                existing.project_id.is_empty() && existing.filename == entry.filename
+            } else {
+                existing.project_id == entry.project_id
+            }
+        });
+
+        match slot {
+            Some(existing) => *existing = entry,
+            None => self.mods.push(entry),
         }
     }
 
@@ -112,6 +118,7 @@ impl Manifest {
                 || entry
                     .filename
                     .strip_suffix(".jar")
+                    .or_else(|| entry.filename.strip_suffix(".jar.disabled"))
                     .map(|stem| stem == needle)
                     .unwrap_or(false)
         })
@@ -142,6 +149,20 @@ mod tests {
 
         assert_eq!(manifest.mods.len(), 1);
         assert_eq!(manifest.mods[0].version_id, "v2");
+    }
+
+    #[test]
+    fn entries_without_a_project_id_do_not_overwrite_each_other() {
+        let mut manifest = Manifest::new("1.21.1", "fabric");
+        let mut first = entry("a", "", "", "a.jar");
+        first.project_id.clear();
+        let mut second = entry("b", "", "", "b.jar");
+        second.project_id.clear();
+
+        manifest.upsert(first);
+        manifest.upsert(second);
+
+        assert_eq!(manifest.mods.len(), 2);
     }
 
     #[test]

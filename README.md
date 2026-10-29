@@ -22,7 +22,8 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Fabric, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|forge|neoforge`
 - [x] Named instances, each with its own game directory
 - [x] Set the in-game language before launch (`--lang zh_cn`)
-- [x] Mods from Modrinth: search, install with dependencies, list
+- [x] Mods from Modrinth: search, install with dependencies, update, remove, enable/disable
+- [x] Import Modrinth modpacks (`.mrpack`) as an instance
 - [ ] Microsoft account login
 - [ ] Quilt loader
 - [ ] Graphical front-end
@@ -109,7 +110,16 @@ mlrc mod search sodium --instance big
 mlrc mod install iris --instance big      # also installs Sodium
 mlrc mod list --instance big
 mlrc mod update --instance big --check    # what is out of date
-mlrc mod remove lithium --instance big
+mlrc mod disable lithium --instance big   # renamed to .jar.disabled
+mlrc mod remove sodium --instance big
+```
+
+A whole modpack installs as one instance: the loader it pins, its overrides, and its
+mods:
+
+```bash
+mlrc instance import Fabulously.Optimized.mrpack
+mlrc launch --instance Fabulously-Optimized
 ```
 
 ### Commands
@@ -122,7 +132,8 @@ mlrc mod remove lithium --instance big
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
-| `mlrc mod search \| install \| list \| update \| remove` | Mods from Modrinth, filtered by the version's loader and Minecraft version; installs bring their required dependencies |
+| `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth, filtered by the version's loader and Minecraft version; installs bring their required dependencies |
+| `mlrc instance import <pack>.mrpack` | Install a Modrinth modpack as a new instance |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |

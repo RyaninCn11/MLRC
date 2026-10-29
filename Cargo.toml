@@ -11,6 +11,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+indicatif = "0.18"
 md-5 = "0.10"
 reqwest = { version = "0.12", features = ["json", "gzip"] }
 serde = { version = "1", features = ["derive"] }

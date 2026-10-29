@@ -1,6 +1,7 @@
 //! Mods: which loader an installed version runs, and installing jars into `mods/`.
 
 pub mod manifest;
+pub mod modpack;
 pub mod modrinth;
 
 use std::collections::BTreeSet;
@@ -238,23 +239,39 @@ pub struct UpdateOutcome {
     pub bytes: u64,
 }
 
+/// Result of an update pass.
+pub struct UpdateReport {
+    pub outcomes: Vec<UpdateOutcome>,
+    /// Files that came from a modpack, whose project the pack never named.
+    pub external: usize,
+}
+
 /// Re-resolves every recorded mod against its project and replaces outdated files.
 pub async fn update(
     http: &HttpClient,
     game_dir: &Path,
     check_only: bool,
     sink: &dyn EventSink,
-) -> MlrcResult<Vec<UpdateOutcome>> {
+) -> MlrcResult<UpdateReport> {
     let mut manifest = Manifest::load(game_dir)?;
     if manifest.mods.is_empty() {
-        return Ok(Vec::new());
+        return Ok(UpdateReport {
+            outcomes: Vec::new(),
+            external: 0,
+        });
     }
 
     let dir = mods_dir(game_dir);
     std::fs::create_dir_all(&dir)?;
 
     let mut outcomes = Vec::new();
+    let mut external = 0usize;
     for entry in manifest.mods.clone() {
+        // A pack's files carry no project id; only the pack can update those.
+        if entry.project_id.is_empty() {
+            external += 1;
+            continue;
+        }
         let latest = modrinth::version_for(
             http,
             &entry.project_id,
@@ -307,8 +324,16 @@ pub async fn update(
             }
         }
 
+        // A disabled mod stays disabled across an update; the suffix is the state.
+        let disabled = entry.filename.ends_with(".disabled");
+        let new_name = if disabled {
+            format!("{}.disabled", file.filename)
+        } else {
+            file.filename.clone()
+        };
+
         // Replace in one step: write beside, then swap, then drop the old name.
-        let target = dir.join(&file.filename);
+        let target = dir.join(&new_name);
         let part = target.with_extension("jar.part");
         std::fs::write(&part, &bytes)?;
         std::fs::rename(&part, &target)?;
@@ -319,7 +344,7 @@ pub async fn update(
         }
 
         sink.emit(Event::FileFinished {
-            path: file.filename.clone(),
+            path: new_name.clone(),
             ok: true,
             cached: false,
         });
@@ -330,7 +355,7 @@ pub async fn update(
             name: latest.name.clone(),
             version_id: latest.id.clone(),
             version_number: latest.version_number.clone(),
-            filename: file.filename.clone(),
+            filename: new_name.clone(),
             sha1: String::new(),
         });
 
@@ -339,7 +364,7 @@ pub async fn update(
             name: latest.name,
             from_version: entry.version_number,
             to_version: Some(latest.version_number),
-            filename: Some(file.filename),
+            filename: Some(new_name),
             bytes: bytes.len() as u64,
         });
     }
@@ -348,7 +373,7 @@ pub async fn update(
         manifest.save(game_dir)?;
     }
 
-    Ok(outcomes)
+    Ok(UpdateReport { outcomes, external })
 }
 
 #[derive(Debug, Clone)]
@@ -396,6 +421,90 @@ pub fn remove(game_dir: &Path, needles: &[String]) -> MlrcResult<Vec<RemovedMod>
 
     manifest.save(game_dir)?;
     Ok(removed)
+}
+
+#[derive(Debug, Clone)]
+pub struct ToggledMod {
+    pub project: String,
+    pub filename: String,
+    pub enabled: bool,
+    /// False when the file already had the requested state.
+    pub changed: bool,
+}
+
+/// Enables or disables mods the way every other launcher does: renaming the jar.
+///
+/// Loaders only read `*.jar`, so `sodium.jar.disabled` is inert without deleting the
+/// file or needing a second mods directory.
+pub fn set_enabled(
+    game_dir: &Path,
+    needles: &[String],
+    enabled: bool,
+) -> MlrcResult<Vec<ToggledMod>> {
+    let mut manifest = Manifest::load(game_dir)?;
+    let dir = mods_dir(game_dir);
+    let mut out = Vec::new();
+
+    for needle in needles {
+        let tracked = manifest.find(needle).cloned();
+        let (project, current) = match &tracked {
+            Some(entry) => (entry.project.clone(), entry.filename.clone()),
+            None => (needle.clone(), needle.clone()),
+        };
+
+        let from = dir.join(&current);
+        if !from.is_file() {
+            return Err(MlrcError::new(
+                ErrorCode::ModNotFound,
+                format!("no installed mod matches {needle}"),
+            )
+            .with("name", needle.clone()));
+        }
+
+        let desired = if enabled {
+            current.strip_suffix(".disabled").map(str::to_string)
+        } else if current.ends_with(".jar") {
+            Some(format!("{current}.disabled"))
+        } else {
+            None
+        };
+
+        let Some(desired) = desired else {
+            out.push(ToggledMod {
+                project,
+                filename: current,
+                enabled,
+                changed: false,
+            });
+            continue;
+        };
+
+        let to = dir.join(&desired);
+        if to.exists() {
+            return Err(MlrcError::new(
+                ErrorCode::ModConflict,
+                format!("{desired} already exists"),
+            )
+            .with("file", desired.clone()));
+        }
+
+        std::fs::rename(&from, &to)?;
+
+        if let Some(mut entry) = tracked {
+            entry.filename = desired.clone();
+            manifest.upsert(entry);
+        }
+
+        out.push(ToggledMod {
+            project,
+            filename: desired,
+            enabled,
+            changed: true,
+        });
+    }
+
+    manifest.save(game_dir)?;
+    Ok(out)
 }
 
 /// Depth-first over required dependencies, de-duplicated by project.

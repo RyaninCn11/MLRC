@@ -474,6 +474,9 @@ mlrc mod install <project...> [--instance <n>] [--version <id>]
 mlrc mod list [--instance <n>] [--version <id>]
 mlrc mod update [--check] [--instance <n>] [--version <id>]
 mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
+mlrc mod disable <project...> [--instance <n>] [--version <id>]
+mlrc mod enable <project...> [--instance <n>] [--version <id>]
+mlrc instance import <pack>.mrpack [--name <n>] [--java=auto|install|skip]
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list
@@ -552,6 +555,14 @@ including in `-v` logs and `--dry-run` command lines.
   to date. `--check` stops before downloading.
 - `mod remove` accepts a slug, a project id or a file name, and also removes jars the
   manifest never saw. An unknown name is `E_MOD_NOT_FOUND`.
+- `mod disable` / `mod enable` rename the jar to `.jar.disabled` and back: loaders only
+  read `*.jar`, so nothing is deleted and no second directory is needed. An update
+  keeps a disabled mod disabled.
+- `instance import <pack>.mrpack` installs the loader the pack pins, creates the
+  instance, unpacks `overrides/` and then downloads the index's files. Entry paths are
+  rejected unless they stay inside the game directory, so an archive cannot write
+  elsewhere. Pack-provided files are recorded without a project id, which makes `mod
+  update` skip them and say why.
 
 ---
 

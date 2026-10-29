@@ -194,6 +194,16 @@ pub enum InstanceCommand {
     },
     /// List instances
     List,
+    /// Import a Modrinth modpack (.mrpack) as a new instance
+    Import {
+        file: PathBuf,
+        /// Instance name; defaults to the pack's own name
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+        /// How to handle the Java runtime the pack's version needs
+        #[arg(long, value_enum, default_value_t = JavaMode::Auto)]
+        java: JavaMode,
+    },
     /// Remove an instance and its game directory
     Remove { name: String },
 }
@@ -249,6 +259,22 @@ pub enum ModCommand {
     },
     /// Remove mods by slug, project id or file name
     Remove {
+        mods: Vec<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Disable mods without deleting them (renamed to `.jar.disabled`)
+    Disable {
+        mods: Vec<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Re-enable disabled mods
+    Enable {
         mods: Vec<String>,
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,

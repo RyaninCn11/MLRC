@@ -96,7 +96,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         }
         Command::Uninstall { version } => cmd_uninstall(cli, out, version),
         Command::Cache { command } => cmd_cache(cli, out, command),
-        Command::Instance { command } => cmd_instance(cli, out, command),
+        Command::Instance { command } => cmd_instance(cli, out, command).await,
         Command::Mod { command } => cmd_mod(cli, out, command).await,
         Command::Java { command } => cmd_java(cli, out, command).await,
         Command::Auth { .. } => Err(not_implemented("auth", "M5")),
@@ -972,7 +972,7 @@ fn subdirs(dir: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<()> {
+async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     root.ensure()?;
 
@@ -1024,6 +1024,55 @@ fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcResult<(
                 "name": instance.name,
                 "version": instance.version,
                 "game_dir": game_dir.display().to_string(),
+            }));
+        }
+        InstanceCommand::Import { file, name, java } => {
+            let cfg = Config::load(&root.config_path())?;
+            let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
+            let client = HttpClient::new(mirror)?;
+            let mode = match java {
+                CliJavaMode::Auto => CoreJavaMode::Auto,
+                CliJavaMode::Install => CoreJavaMode::Install,
+                CliJavaMode::Skip => CoreJavaMode::Skip,
+            };
+            let options = InstallOptions {
+                threads: 8,
+                java: JavaPolicy {
+                    mode,
+                    allow_host: cfg.java.custom,
+                    host_path: cfg.java.path.clone(),
+                },
+            };
+
+            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let summary =
+                mods::modpack::import(&client, &root, file, name.as_deref(), &options, &sink)
+                    .await?;
+            sink.finish();
+
+            out.human(format!(
+                "imported {} on {} ({})",
+                summary.instance, summary.minecraft, summary.version
+            ));
+            if let Some(loader) = &summary.loader {
+                out.human(format!("loader     : {loader}"));
+            }
+            out.human(format!(
+                "files      : {} installed, {} skipped, {}",
+                summary.files,
+                summary.skipped,
+                human_bytes(summary.bytes)
+            ));
+            out.json_event(json!({
+                "schema": 1,
+                "event": "pack_imported",
+                "instance": summary.instance,
+                "version": summary.version,
+                "minecraft": summary.minecraft,
+                "loader": summary.loader,
+                "files": summary.files,
+                "skipped": summary.skipped,
+                "bytes": summary.bytes,
             }));
         }
         InstanceCommand::List => {
@@ -1270,10 +1319,15 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
 
             out.human(format!(" {:<24}{:<28}{}", "PROJECT", "VERSION", "FILE"));
             for entry in &tracked {
+                let version = if entry.version_number.is_empty() {
+                    "-"
+                } else {
+                    entry.version_number.as_str()
+                };
                 out.human(format!(
                     " {:<24}{:<28}{}",
                     truncate(&entry.project, 23),
-                    truncate(&entry.version_number, 27),
+                    truncate(version, 27),
                     entry.filename
                 ));
             }
@@ -1304,17 +1358,17 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let game_dir = game_dir_for(&root, instance.as_ref());
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
-            let outcomes = mods::update(&client, &game_dir, *check, &sink).await?;
+            let report = mods::update(&client, &game_dir, *check, &sink).await?;
             sink.finish();
 
-            if outcomes.is_empty() {
+            if report.outcomes.is_empty() && report.external == 0 {
                 out.human("no mods recorded; install some with `mlrc mod install`");
                 return Ok(());
             }
 
             let mut updated = 0usize;
             let mut bytes = 0u64;
-            for outcome in &outcomes {
+            for outcome in &report.outcomes {
                 match &outcome.to_version {
                     Some(to) if *check => out.human(format!(
                         "{}: {} -> {} available",
@@ -1335,17 +1389,24 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 }
             }
 
+            if report.external > 0 {
+                out.human(format!(
+                    "{} file(s) came from a modpack and are updated with the pack",
+                    report.external
+                ));
+            }
             out.human(format!(
                 "{} mod(s) checked, {updated} {}, {} downloaded",
-                outcomes.len(),
+                report.outcomes.len(),
                 if *check { "outdated" } else { "updated" },
                 human_bytes(bytes)
             ));
             out.json_event(json!({
                 "schema": 1,
                 "event": "mods_updated",
-                "checked": outcomes.len(),
+                "checked": report.outcomes.len(),
                 "updated": updated,
+                "external": report.external,
                 "bytes": bytes,
                 "check_only": check,
             }));
@@ -1382,6 +1443,68 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 "schema": 1,
                 "event": "mods_removed",
                 "files": files,
+            }));
+        }
+        ModCommand::Disable {
+            mods: names,
+            instance,
+            version,
+        }
+        | ModCommand::Enable {
+            mods: names,
+            instance,
+            version,
+        } => {
+            let enabled = matches!(command, ModCommand::Enable { .. });
+            let instance = load_instance(&root, instance.as_deref())?;
+            let _ = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = game_dir_for(&root, instance.as_ref());
+
+            if names.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    format!(
+                        "no mod given; run `mlrc mod {} sodium`",
+                        if enabled { "enable" } else { "disable" }
+                    ),
+                ));
+            }
+
+            let toggled = mods::set_enabled(&game_dir, names, enabled)?;
+            for item in &toggled {
+                if item.changed {
+                    out.human(format!(
+                        "{} {} -> {}",
+                        if item.enabled { "enabled" } else { "disabled" },
+                        item.project,
+                        item.filename
+                    ));
+                } else {
+                    out.human(format!(
+                        "{} already {}",
+                        item.project,
+                        if enabled { "enabled" } else { "disabled" }
+                    ));
+                }
+            }
+
+            let changed: Vec<&str> = toggled
+                .iter()
+                .filter(|item| item.changed)
+                .map(|item| item.filename.as_str())
+                .collect();
+            out.json_event(json!({
+                "schema": 1,
+                "event": "mods_toggled",
+                "enabled": enabled,
+                "files": changed,
             }));
         }
     }
