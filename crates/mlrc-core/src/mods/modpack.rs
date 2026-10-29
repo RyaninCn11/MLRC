@@ -322,7 +322,7 @@ async fn import_modrinth(
             total_bytes: None,
         });
 
-        let bytes = client.get_bytes(url).await?;
+        let bytes = crate::mods::fetch_bytes(client, url).await?;
         if !file.hashes.sha1.is_empty() {
             let actual = crate::mods::sha1_of(&bytes);
             if actual != file.hashes.sha1 {
@@ -633,7 +633,7 @@ async fn import_curseforge(
                 total_bytes: Some(resolved.size).filter(|size| *size > 0),
             });
 
-            let bytes = client.get_bytes(&resolved.download_url).await?;
+            let bytes = crate::mods::fetch_bytes(client, &resolved.download_url).await?;
             if !resolved.sha1.is_empty() {
                 let actual = crate::mods::sha1_of(&bytes);
                 if actual != resolved.sha1 {

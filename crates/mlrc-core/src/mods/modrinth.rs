@@ -56,6 +56,8 @@ pub struct File {
     #[serde(default)]
     pub primary: bool,
     #[serde(default)]
+    pub size: u64,
+    #[serde(default)]
     pub hashes: Hashes,
 }
 

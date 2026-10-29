@@ -245,6 +245,9 @@ pub enum ModCommand {
         /// Target another installed version
         #[arg(long)]
         version: Option<String>,
+        /// Resolve and print what would be installed, without downloading
+        #[arg(long)]
+        dry_run: bool,
     },
     /// List the jars in a mods directory
     List {

@@ -1229,6 +1229,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             source,
             instance,
             version,
+            dry_run,
         } => {
             if projects.is_empty() {
                 return Err(MlrcError::new(
@@ -1252,6 +1253,59 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 Some(instance) => Instance::game_dir(&root, &instance.name),
                 None => root.minecraft_dir(),
             };
+
+            if *dry_run {
+                let mut planned = Vec::new();
+                for project in projects {
+                    planned.extend(
+                        mods::plan(&client, &platform, project, source, key.as_deref()).await?,
+                    );
+                }
+
+                if out.is_json() {
+                    let items: Vec<_> = planned
+                        .iter()
+                        .map(|module| {
+                            json!({
+                                "name": module.name,
+                                "version": module.version,
+                                "filename": module.filename,
+                                "bytes": module.size,
+                            })
+                        })
+                        .collect();
+                    out.json_event(json!({"schema": 1, "event": "mods_planned", "mods": items}));
+                    return Ok(());
+                }
+
+                if planned.is_empty() {
+                    out.human("nothing to install");
+                    return Ok(());
+                }
+
+                out.human(format!(" {:<30}{:<28}{}", "PROJECT", "VERSION", "FILE"));
+                let mut total = 0u64;
+                for module in &planned {
+                    total += module.size;
+                    out.human(format!(
+                        " {:<30}{:<28}{}",
+                        truncate(&module.name, 29),
+                        truncate(&module.version, 27),
+                        module.filename
+                    ));
+                }
+                out.human(format!(
+                    "{} file(s) for {}, {}",
+                    planned.len(),
+                    mods::mods_dir(&game_dir).display(),
+                    if total > 0 {
+                        human_bytes(total)
+                    } else {
+                        "size unknown".to_string()
+                    }
+                ));
+                return Ok(());
+            }
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
             let mut total = 0u64;

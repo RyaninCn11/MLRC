@@ -492,7 +492,7 @@ mlrc use <version>
 mlrc uninstall <version>
 mlrc instance create <name> --version <id> [--memory <size>] | list | remove <name>
 mlrc mod search <query> [--mc <ver>] [--loader <name>] [--instance <n>] [--limit N]
-mlrc mod install <project...> [--source modrinth|curseforge] [--instance <n>] [--version <id>]
+mlrc mod install <project...> [--source modrinth|curseforge] [--dry-run] [--instance <n>] [--version <id>]
 mlrc mod list [--instance <n>] [--version <id>]
 mlrc mod update [--check] [--instance <n>] [--version <id>]
 mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
@@ -602,6 +602,11 @@ The two sources differ in ways the launcher has to absorb:
 - Whether a CurseForge file is newer is decided by file id, not by release type: ids
   grow with upload time, while "prefer release" would report a beta the pack pinned as
   an update target in reverse. Installing still prefers a release when one exists.
+- `mod install --dry-run` resolves the project and its dependencies and prints the
+  file list without downloading, which is the cheap way to answer "what would this
+  pull in".
+- Downloads are attempted three times before failing: one CDN timeout should not cost
+  the user the whole command.
 - Pack-provided Modrinth files are recorded without a project id, which makes `mod
   update` skip them and say why; CurseForge pack files do carry ids and update
   normally.
@@ -612,11 +617,15 @@ The two sources differ in ways the launcher has to absorb:
 
 | Layer | Content |
 |---|---|
-| Unit | rule matrix, argument templating, inheritance merge, offline UUID, java version parsing, default-user-jvm parsing |
+| Unit | rule matrix, argument templating, inheritance merge, offline UUID, java version parsing, proxy selection, memory values, loader detection, manifest bookkeeping, pack path safety |
 | Fixtures | real documents in the repository: 1.6.4 (legacy arguments), 1.12.2, 1.18.2 (extract rules), 1.21.x, 26.3 |
-| Integration | a mock HTTP server: install, assert layout and hashes, resume after a simulated crash |
-| Contract | NDJSON snapshots, so front-end compatibility is tested rather than promised |
+| Integration | `crates/mlrc-core/tests/install_flow.rs`: a real HTTP server on 127.0.0.1, a seeded manifest cache, then a full install. Asserts the layout, the bytes on disk, `installed.json`, `objects.txt`, that a corrupted download fails with `E_NET_HASH` and leaves no complete state, and that a second install restores a deleted file from the store |
 | CI | `fmt`, `clippy -D warnings`, `test` on Windows and Linux, and an ASCII-only source check that enforces C1 |
+
+The integration test never touches the internet: the engine reads its manifest cache
+before asking the network, so the fixture seeds it with URLs pointing at the local
+server. Downloads force `proxy = none`, because a machine that routes 127.0.0.1
+through a proxy would otherwise make the test depend on that proxy.
 
 ---
 

@@ -74,6 +74,97 @@ pub fn mods_dir(game_dir: &Path) -> PathBuf {
     game_dir.join("mods")
 }
 
+/// What `mod install --dry-run` prints: resolved, not downloaded.
+#[derive(Debug, Clone)]
+pub struct PlannedMod {
+    pub name: String,
+    pub version: String,
+    pub filename: String,
+    pub size: u64,
+}
+
+/// Resolves a project and its required dependencies without writing anything.
+pub async fn plan(
+    http: &HttpClient,
+    platform: &Platform,
+    project: &str,
+    source: Source,
+    key: Option<&str>,
+) -> MlrcResult<Vec<PlannedMod>> {
+    match source {
+        Source::Modrinth => {
+            let mut seen = BTreeSet::new();
+            let mut versions = Vec::new();
+            collect(
+                http,
+                Target::Project(project.to_string()),
+                platform,
+                0,
+                &mut seen,
+                &mut versions,
+            )
+            .await?;
+
+            versions
+                .iter()
+                .map(|version| {
+                    let file = version.primary_file()?;
+                    Ok(PlannedMod {
+                        name: version.name.clone(),
+                        version: version.version_number.clone(),
+                        filename: file.filename.clone(),
+                        size: file.size,
+                    })
+                })
+                .collect()
+        }
+        Source::CurseForge => {
+            let key = key.ok_or_else(missing_key)?;
+            let mut seen = BTreeSet::new();
+            let mut files = Vec::new();
+            collect_curseforge(
+                http,
+                key,
+                project.to_string(),
+                platform,
+                0,
+                &mut seen,
+                &mut files,
+            )
+            .await?;
+
+            Ok(files
+                .into_iter()
+                .map(|file| PlannedMod {
+                    name: file.display_name.clone(),
+                    version: file.display_name,
+                    filename: file.file_name,
+                    size: file.size,
+                })
+                .collect())
+        }
+    }
+}
+
+/// Downloads with a few attempts. A single timeout on a CDN should not fail an
+/// otherwise healthy install, and a retry is cheaper than asking the user to repeat
+/// the command.
+pub async fn fetch_bytes(http: &HttpClient, url: &str) -> MlrcResult<Vec<u8>> {
+    let mut last: Option<MlrcError> = None;
+
+    for attempt in 0..3u64 {
+        match http.get_bytes(url).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) => {
+                last = Some(err);
+                tokio::time::sleep(std::time::Duration::from_millis(400 * (attempt + 1))).await;
+            }
+        }
+    }
+
+    Err(last.expect("the loop always runs at least once"))
+}
+
 #[derive(Debug, Clone)]
 pub struct InstalledMod {
     pub name: String,
@@ -189,7 +280,7 @@ async fn install_curseforge(
                 total_bytes: Some(file.size).filter(|size| *size > 0),
             });
 
-            let data = http.get_bytes(&file.download_url).await?;
+            let data = fetch_bytes(http, &file.download_url).await?;
             if !file.sha1.is_empty() {
                 let actual = sha1_of(&data);
                 if actual != file.sha1 {
@@ -335,7 +426,7 @@ pub async fn install(
             total_bytes: None,
         });
 
-        let bytes = http.get_bytes(&file.url).await?;
+        let bytes = fetch_bytes(http, &file.url).await?;
         if !file.hashes.sha1.is_empty() {
             let actual = sha1_of(&bytes);
             if actual != file.hashes.sha1 {
@@ -556,7 +647,7 @@ pub async fn update(
             total_bytes: None,
         });
 
-        let bytes = http.get_bytes(&latest.url).await?;
+        let bytes = fetch_bytes(http, &latest.url).await?;
         if !latest.sha1.is_empty() {
             let actual = sha1_of(&bytes);
             if actual != latest.sha1 {
