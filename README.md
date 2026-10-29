@@ -116,7 +116,8 @@ mlrc mod remove sodium --instance big
 ```
 
 A whole modpack installs as one instance: the loader it pins, its overrides, and its
-mods:
+mods. Both formats work: Modrinth `.mrpack` and CurseForge `.zip` (the latter needs
+the API key).
 
 ```bash
 mlrc instance import Fabulously.Optimized.mrpack
@@ -142,7 +143,7 @@ mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies |
-| `mlrc instance import <pack>.mrpack` | Install a Modrinth modpack as a new instance |
+| `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |

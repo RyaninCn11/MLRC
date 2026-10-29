@@ -464,7 +464,7 @@ pub async fn update(
         }
 
         let source = Source::parse(&entry.source)?;
-        let latest = match source {
+        let latest: Option<Latest> = match source {
             Source::Modrinth => {
                 let version = modrinth::version_for(
                     http,
@@ -473,19 +473,23 @@ pub async fn update(
                     &manifest.loader,
                 )
                 .await?;
-                let file = version.primary_file()?.clone();
-                Latest {
-                    id: version.id,
-                    name: version.name,
-                    version_number: version.version_number,
-                    filename: file.filename,
-                    url: file.url,
-                    sha1: file.hashes.sha1,
+                if version.id == entry.version_id {
+                    None
+                } else {
+                    let file = version.primary_file()?.clone();
+                    Some(Latest {
+                        id: version.id,
+                        name: version.name,
+                        version_number: version.version_number,
+                        filename: file.filename,
+                        url: file.url,
+                        sha1: file.hashes.sha1,
+                    })
                 }
             }
             Source::CurseForge => {
                 let key = key.ok_or_else(missing_key)?;
-                let file = curseforge::resolve(
+                let files = curseforge::files(
                     http,
                     key,
                     &entry.project_id,
@@ -493,18 +497,35 @@ pub async fn update(
                     &manifest.loader,
                 )
                 .await?;
-                Latest {
+
+                // File ids grow with upload time, so "newer" is a comparison of ids.
+                // Release type only decides which file to prefer, never whether one
+                // is newer: otherwise a beta the pack pinned would look like an
+                // update target in reverse.
+                let installed: u64 = entry.version_id.parse().unwrap_or(0);
+                let newest_release = files
+                    .iter()
+                    .filter(|file| file.release_type == 1)
+                    .max_by_key(|file| file.file_id);
+                let newest = files.iter().max_by_key(|file| file.file_id);
+
+                let candidate = match newest_release {
+                    Some(release) if release.file_id > installed => Some(release),
+                    _ => newest.filter(|file| file.file_id > installed),
+                };
+
+                candidate.map(|file| Latest {
                     id: file.file_id.to_string(),
                     name: file.display_name.clone(),
-                    version_number: file.display_name,
-                    filename: file.file_name,
-                    url: file.download_url,
-                    sha1: file.sha1,
-                }
+                    version_number: file.display_name.clone(),
+                    filename: file.file_name.clone(),
+                    url: file.download_url.clone(),
+                    sha1: file.sha1.clone(),
+                })
             }
         };
 
-        if latest.id == entry.version_id {
+        let Some(latest) = latest else {
             outcomes.push(UpdateOutcome {
                 project: entry.project,
                 name: entry.name,
@@ -514,7 +535,7 @@ pub async fn update(
                 bytes: 0,
             });
             continue;
-        }
+        };
 
         if check_only {
             outcomes.push(UpdateOutcome {

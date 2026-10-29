@@ -493,7 +493,7 @@ mlrc mod update [--check] [--instance <n>] [--version <id>]
 mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
 mlrc mod disable <project...> [--instance <n>] [--version <id>]
 mlrc mod enable <project...> [--instance <n>] [--version <id>]
-mlrc instance import <pack>.mrpack [--name <n>] [--java=auto|install|skip]
+mlrc instance import <pack>.mrpack|<pack>.zip [--name <n>] [--java=auto|install|skip]
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list
@@ -588,11 +588,18 @@ The two sources differ in ways the launcher has to absorb:
 - `mod disable` / `mod enable` rename the jar to `.jar.disabled` and back: loaders only
   read `*.jar`, so nothing is deleted and no second directory is needed. An update
   keeps a disabled mod disabled.
-- `instance import <pack>.mrpack` installs the loader the pack pins, creates the
-  instance, unpacks `overrides/` and then downloads the index's files. Entry paths are
+- `instance import <pack>` accepts both pack formats: a `.mrpack` whose index lists
+  download URLs, and a CurseForge `.zip` whose `manifest.json` lists project and file
+  ids. The latter needs the API key, installs the loader the pack pins, resolves every
+  id through the API, and skips the files the pack marks optional. Entry paths are
   rejected unless they stay inside the game directory, so an archive cannot write
-  elsewhere. Pack-provided files are recorded without a project id, which makes `mod
-  update` skip them and say why.
+  elsewhere.
+- Whether a CurseForge file is newer is decided by file id, not by release type: ids
+  grow with upload time, while "prefer release" would report a beta the pack pinned as
+  an update target in reverse. Installing still prefers a release when one exists.
+- Pack-provided Modrinth files are recorded without a project id, which makes `mod
+  update` skip them and say why; CurseForge pack files do carry ids and update
+  normally.
 
 ---
 

@@ -1052,9 +1052,16 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
             };
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
-            let summary =
-                mods::modpack::import(&client, &root, file, name.as_deref(), &options, &sink)
-                    .await?;
+            let summary = mods::modpack::import(
+                &client,
+                &root,
+                file,
+                name.as_deref(),
+                cfg.curseforge.key().as_deref(),
+                &options,
+                &sink,
+            )
+            .await?;
             sink.finish();
 
             out.human(format!(

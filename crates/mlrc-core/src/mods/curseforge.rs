@@ -28,6 +28,8 @@ pub struct CfFile {
     pub download_url: String,
     pub sha1: String,
     pub size: u64,
+    /// 1 release, 2 beta, 3 alpha.
+    pub release_type: u32,
     /// Mod ids of `required` dependencies.
     pub required: Vec<u64>,
 }
@@ -153,19 +155,142 @@ pub async fn resolve(
         .await
         .map_err(|err| explain(err, mod_id))?;
 
-    // Newest first, but a release beats a beta: same rule as the Modrinth side.
+    if files.data.is_empty() {
+        return Err(MlrcError::new(
+            ErrorCode::ModNotFound,
+            format!("no curseforge file for {mc} on {loader} (mod {mod_id})"),
+        )
+        .with("mod_id", mod_id));
+    }
+
+    // Installing takes a release when one exists; a beta only if there is nothing else.
+    let mod_info: Envelope<Mod> = client
+        .get_json_with_headers(
+            &format!("{BASE}/mods/{mod_id}"),
+            &[],
+            &headers(key),
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(|err| explain(err, mod_id))?;
+
     let chosen = files
         .data
         .iter()
         .find(|file| file.release_type == 1)
-        .or_else(|| files.data.first())
-        .ok_or_else(|| {
-            MlrcError::new(
-                ErrorCode::ModNotFound,
-                format!("no curseforge file for {mc} on {loader} (mod {mod_id})"),
-            )
-            .with("mod_id", mod_id)
-        })?;
+        .unwrap_or(&files.data[0]);
+
+    finish(client, key, mod_id, chosen, &mod_info.data).await
+}
+
+/// Every file of a project for a game version and loader, newest first.
+///
+/// `mod update` needs the list rather than one pick: whether something is newer is a
+/// question of file ids, not of release type. Choosing only releases would "update" a
+/// beta the pack pinned back down to an older release.
+pub async fn files(
+    client: &HttpClient,
+    key: &str,
+    project: &str,
+    mc: &str,
+    loader: &str,
+) -> MlrcResult<Vec<CfFile>> {
+    let mod_id: u64 = project.trim().parse().map_err(|_| {
+        MlrcError::new(
+            ErrorCode::Usage,
+            format!(
+                "curseforge needs a numeric project id, not {}",
+                project.trim()
+            ),
+        )
+    })?;
+
+    let loader = loader_type(loader).ok_or_else(|| {
+        MlrcError::new(
+            ErrorCode::Usage,
+            format!("curseforge has no loader type for {loader}"),
+        )
+    })?;
+
+    let listed: Envelope<Vec<FileEntry>> = client
+        .get_json_with_headers(
+            &format!("{BASE}/mods/{mod_id}/files"),
+            &[
+                ("gameVersion", mc.to_string()),
+                ("modLoaderType", loader.to_string()),
+                ("pageSize", "50".to_string()),
+            ],
+            &headers(key),
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(|err| explain(err, mod_id))?;
+
+    let mod_info: Envelope<Mod> = client
+        .get_json_with_headers(
+            &format!("{BASE}/mods/{mod_id}"),
+            &[],
+            &headers(key),
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(|err| explain(err, mod_id))?;
+
+    let mut out = Vec::new();
+    for entry in &listed.data {
+        // Files without a usable link are skipped instead of failing the whole list.
+        if let Ok(file) = finish(client, key, mod_id, entry, &mod_info.data).await {
+            out.push(file);
+        }
+    }
+    Ok(out)
+}
+
+async fn finish(
+    client: &HttpClient,
+    key: &str,
+    mod_id: u64,
+    entry: &FileEntry,
+    info: &Mod,
+) -> MlrcResult<CfFile> {
+    if info.allow_mod_distribution == Some(false) {
+        return Err(restricted(mod_id, &entry.file_name));
+    }
+
+    let download_url = match &entry.download_url {
+        Some(url) => url.clone(),
+        None => download_link(client, key, mod_id, entry.id).await?,
+    };
+
+    Ok(CfFile {
+        mod_id,
+        file_id: entry.id,
+        display_name: entry.display_name.clone(),
+        file_name: entry.file_name.clone(),
+        download_url,
+        sha1: entry.sha1(),
+        size: entry.file_length,
+        release_type: entry.release_type,
+        required: entry
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.relation_type == 3)
+            .map(|dependency| dependency.mod_id)
+            .collect(),
+    })
+}
+
+/// One exact file, as a modpack's `manifest.json` names it.
+pub async fn file(client: &HttpClient, key: &str, mod_id: u64, file_id: u64) -> MlrcResult<CfFile> {
+    let entry: Envelope<FileEntry> = client
+        .get_json_with_headers(
+            &format!("{BASE}/mods/{mod_id}/files/{file_id}"),
+            &[],
+            &headers(key),
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(|err| explain(err, mod_id))?;
 
     let mod_info: Envelope<Mod> = client
         .get_json_with_headers(
@@ -178,28 +303,24 @@ pub async fn resolve(
         .map_err(|err| explain(err, mod_id))?;
 
     if mod_info.data.allow_mod_distribution == Some(false) {
-        return Err(restricted(mod_id, &chosen.file_name));
+        return Err(restricted(mod_id, &entry.data.file_name));
     }
 
-    let download_url = match &chosen.download_url {
+    let download_url = match &entry.data.download_url {
         Some(url) => url.clone(),
-        None => download_link(client, key, mod_id, chosen.id).await?,
+        None => download_link(client, key, mod_id, file_id).await?,
     };
 
     Ok(CfFile {
         mod_id,
-        file_id: chosen.id,
-        display_name: chosen.display_name.clone(),
-        file_name: chosen.file_name.clone(),
+        file_id,
+        display_name: entry.data.display_name.clone(),
+        file_name: entry.data.file_name.clone(),
         download_url,
-        sha1: chosen.sha1(),
-        size: chosen.file_length,
-        required: chosen
-            .dependencies
-            .iter()
-            .filter(|dependency| dependency.relation_type == 3)
-            .map(|dependency| dependency.mod_id)
-            .collect(),
+        sha1: entry.data.sha1(),
+        size: entry.data.file_length,
+        release_type: entry.data.release_type,
+        required: Vec::new(),
     })
 }
 
