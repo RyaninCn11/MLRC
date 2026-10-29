@@ -203,6 +203,9 @@ pub enum InstanceCommand {
         /// How to handle the Java runtime the pack's version needs
         #[arg(long, value_enum, default_value_t = JavaMode::Auto)]
         java: JavaMode,
+        /// Print what the pack contains without installing anything
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Remove an instance and its game directory
     Remove { name: String },

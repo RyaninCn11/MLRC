@@ -1042,7 +1042,58 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 "game_dir": game_dir.display().to_string(),
             }));
         }
-        InstanceCommand::Import { file, name, java } => {
+        InstanceCommand::Import {
+            file,
+            name,
+            java,
+            dry_run,
+        } => {
+            if *dry_run {
+                let preview = mods::modpack::preview(file)?;
+                let kind = match preview.kind {
+                    mods::modpack::Kind::Modrinth => "modrinth",
+                    mods::modpack::Kind::CurseForge => "curseforge",
+                };
+
+                if out.is_json() {
+                    let files: Vec<_> = preview
+                        .files
+                        .iter()
+                        .map(|entry| json!({"path": entry.label, "bytes": entry.bytes}))
+                        .collect();
+                    out.json_event(json!({
+                        "schema": 1,
+                        "event": "pack_preview",
+                        "kind": kind,
+                        "name": preview.name,
+                        "minecraft": preview.minecraft,
+                        "files": files,
+                        "skipped": preview.skipped,
+                        "overrides": preview.overrides,
+                    }));
+                    return Ok(());
+                }
+
+                detail(out, "pack", &format!("{} ({kind})", preview.name));
+                detail(out, "minecraft", &preview.minecraft);
+                if let Some((loader, version)) = &preview.loader {
+                    detail(out, "loader", &format!("{loader} {version}"));
+                }
+                detail(out, "overrides", &preview.overrides.to_string());
+                if preview.skipped > 0 {
+                    detail(out, "skipped", &format!("{} optional", preview.skipped));
+                }
+                out.human(format!("{} file(s):", preview.files.len()));
+                for entry in &preview.files {
+                    if entry.bytes > 0 {
+                        out.human(format!("  {} ({})", entry.label, human_bytes(entry.bytes)));
+                    } else {
+                        out.human(format!("  {}", entry.label));
+                    }
+                }
+                return Ok(());
+            }
+
             let cfg = Config::load(&root.config_path())?;
             let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
             let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
@@ -1616,6 +1667,10 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
     }
 
     Ok(())
+}
+
+fn detail(out: &Out, label: &str, value: &str) {
+    out.human(format!("{:<13}{value}", format!("{label}:")));
 }
 
 fn game_dir_for(root: &DataRoot, instance: Option<&Instance>) -> std::path::PathBuf {

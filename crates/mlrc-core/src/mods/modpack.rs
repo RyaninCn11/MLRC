@@ -41,6 +41,8 @@ struct PackFile {
     downloads: Vec<String>,
     #[serde(default)]
     env: Option<FileEnv>,
+    #[serde(default, rename = "fileSize")]
+    file_size: u64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -64,6 +66,90 @@ pub struct ImportSummary {
     pub files: usize,
     pub bytes: u64,
     pub skipped: usize,
+}
+
+/// What an import would do, without writing anything.
+#[derive(Debug, Clone)]
+pub struct PreviewFile {
+    /// A path for Modrinth packs, `projectID/fileID` for CurseForge ones.
+    pub label: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PackPreview {
+    pub kind: Kind,
+    pub name: String,
+    pub minecraft: String,
+    pub loader: Option<(String, String)>,
+    pub files: Vec<PreviewFile>,
+    /// Files the pack marks optional, which an import skips.
+    pub skipped: usize,
+    pub overrides: usize,
+}
+
+pub fn preview(pack_path: &Path) -> MlrcResult<PackPreview> {
+    match detect(pack_path)? {
+        Kind::Modrinth => {
+            let pack = Pack::open(pack_path)?;
+            let files: Vec<PreviewFile> = pack
+                .index
+                .files
+                .iter()
+                .filter(|file| !client_unsupported(file))
+                .map(|file| PreviewFile {
+                    label: file.path.clone(),
+                    bytes: file.file_size,
+                })
+                .collect();
+
+            Ok(PackPreview {
+                skipped: pack.index.files.len() - files.len(),
+                kind: Kind::Modrinth,
+                name: pack.name().to_string(),
+                minecraft: pack.minecraft()?,
+                loader: pack
+                    .loader()
+                    .map(|(name, version)| (name.to_string(), version)),
+                files,
+                overrides: pack.overrides.len(),
+            })
+        }
+        Kind::CurseForge => {
+            let pack = CfPack::open(pack_path)?;
+            // Names would cost one request per file, so a preview shows the ids the
+            // manifest already has.
+            let files: Vec<PreviewFile> = pack
+                .manifest
+                .files
+                .iter()
+                .filter(|file| file.required)
+                .map(|file| PreviewFile {
+                    label: format!("{}/{}", file.project_id, file.file_id),
+                    bytes: 0,
+                })
+                .collect();
+
+            Ok(PackPreview {
+                skipped: pack.manifest.files.len() - files.len(),
+                kind: Kind::CurseForge,
+                name: pack.name().to_string(),
+                minecraft: pack.minecraft()?,
+                loader: pack
+                    .loader()
+                    .map(|(name, version)| (name.to_string(), version)),
+                files,
+                overrides: pack.overrides.len(),
+            })
+        }
+    }
+}
+
+fn client_unsupported(file: &PackFile) -> bool {
+    file.env
+        .as_ref()
+        .map(|env| env.client == "unsupported")
+        .unwrap_or(false)
 }
 
 /// Reads the pack's index and overrides without touching the data directory.

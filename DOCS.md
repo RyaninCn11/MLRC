@@ -498,7 +498,7 @@ mlrc mod update [--check] [--instance <n>] [--version <id>]
 mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
 mlrc mod disable <project...> [--instance <n>] [--version <id>]
 mlrc mod enable <project...> [--instance <n>] [--version <id>]
-mlrc instance import <pack>.mrpack|<pack>.zip [--name <n>] [--java=auto|install|skip]
+mlrc instance import <pack>.mrpack|<pack>.zip [--dry-run] [--name <n>] [--java=auto|install|skip]
 mlrc java list | install <component|major> | remove <major>
 mlrc auth login | logout | status
 mlrc config get <key> | set <key> <value> | list
@@ -607,6 +607,10 @@ The two sources differ in ways the launcher has to absorb:
   pull in".
 - Downloads are attempted three times before failing: one CDN timeout should not cost
   the user the whole command.
+- `instance import --dry-run` reports the pack's kind, Minecraft version, loader,
+  override count and file list without writing anything. A CurseForge pack shows
+  `projectID/fileID` pairs: resolving names would cost one request per file, which is
+  not what a preview is for.
 - Pack-provided Modrinth files are recorded without a project id, which makes `mod
   update` skip them and say why; CurseForge pack files do carry ids and update
   normally.
@@ -619,13 +623,18 @@ The two sources differ in ways the launcher has to absorb:
 |---|---|
 | Unit | rule matrix, argument templating, inheritance merge, offline UUID, java version parsing, proxy selection, memory values, loader detection, manifest bookkeeping, pack path safety |
 | Fixtures | real documents in the repository: 1.6.4 (legacy arguments), 1.12.2, 1.18.2 (extract rules), 1.21.x, 26.3 |
-| Integration | `crates/mlrc-core/tests/install_flow.rs`: a real HTTP server on 127.0.0.1, a seeded manifest cache, then a full install. Asserts the layout, the bytes on disk, `installed.json`, `objects.txt`, that a corrupted download fails with `E_NET_HASH` and leaves no complete state, and that a second install restores a deleted file from the store |
+| Integration | `crates/mlrc-core/tests/install_flow.rs`: a real HTTP server on 127.0.0.1, a seeded manifest cache, then a full install. Asserts the layout, the bytes on disk, `installed.json`, `objects.txt`; that a corrupted download fails with `E_NET_HASH` and leaves no complete state; that a second install restores a deleted file from the store; that a truncated response fails the run and the next one finishes the job; and that the event stream keeps the documented shape |
 | CI | `fmt`, `clippy -D warnings`, `test` on Windows and Linux, and an ASCII-only source check that enforces C1 |
 
 The integration test never touches the internet: the engine reads its manifest cache
 before asking the network, so the fixture seeds it with URLs pointing at the local
 server. Downloads force `proxy = none`, because a machine that routes 127.0.0.1
 through a proxy would otherwise make the test depend on that proxy.
+
+The event test is the contract test: it asserts the tag and field names each event
+serializes to, because a front-end parses JSON and the Rust types are not the promise.
+Warnings may precede the download phase - a missing runtime is reported before anything
+is fetched - so the test looks for the phase rather than assuming position zero.
 
 ---
 
