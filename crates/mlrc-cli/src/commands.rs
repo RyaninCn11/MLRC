@@ -1141,8 +1141,18 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             loader,
             instance,
             version,
+            source,
             limit,
         } => {
+            let source = mods::Source::parse(source)?;
+            if source == mods::Source::CurseForge {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "curseforge does not expose search to api keys; open curseforge.com, \
+                     find the mod, and install it by numeric project id",
+                ));
+            }
+
             let instance = load_instance(&root, instance.as_deref())?;
             let platform = mod_platform(
                 &root,
@@ -1192,6 +1202,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
         }
         ModCommand::Install {
             projects,
+            source,
             instance,
             version,
         } => {
@@ -1202,6 +1213,8 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 ));
             }
 
+            let source = mods::Source::parse(source)?;
+            let key = cfg.curseforge.key();
             let instance = load_instance(&root, instance.as_deref())?;
             let platform = mod_platform(
                 &root,
@@ -1221,8 +1234,16 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let mut names = Vec::new();
 
             for project in projects {
-                let installed =
-                    mods::install(&client, &game_dir, &platform, project, &sink).await?;
+                let installed = mods::install_from(
+                    &client,
+                    &game_dir,
+                    &platform,
+                    project,
+                    source,
+                    key.as_deref(),
+                    &sink,
+                )
+                .await?;
                 sink.finish();
 
                 for module in &installed {
@@ -1358,7 +1379,14 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let game_dir = game_dir_for(&root, instance.as_ref());
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
-            let report = mods::update(&client, &game_dir, *check, &sink).await?;
+            let report = mods::update(
+                &client,
+                &game_dir,
+                *check,
+                cfg.curseforge.key().as_deref(),
+                &sink,
+            )
+            .await?;
             sink.finish();
 
             if report.outcomes.is_empty() && report.external == 0 {

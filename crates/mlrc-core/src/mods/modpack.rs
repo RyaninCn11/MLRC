@@ -328,6 +328,7 @@ pub async fn import(
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 sha1: file.hashes.sha1.clone(),
+                source: String::new(),
             });
         }
     }

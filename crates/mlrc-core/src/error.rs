@@ -26,6 +26,7 @@ pub enum ErrorCode {
     LoaderUnavailable,
     ModNotFound,
     ModConflict,
+    ModRestricted,
 }
 
 impl ErrorCode {
@@ -50,6 +51,7 @@ impl ErrorCode {
             Self::LoaderUnavailable => "E_LOADER_UNAVAILABLE",
             Self::ModNotFound => "E_MOD_NOT_FOUND",
             Self::ModConflict => "E_MOD_CONFLICT",
+            Self::ModRestricted => "E_MOD_RESTRICTED",
         }
     }
 
@@ -62,7 +64,7 @@ impl ErrorCode {
             Self::MetaShape => 6,
             Self::PortableReadOnly => 7,
             Self::VersionUnknown | Self::VersionIncomplete | Self::LoaderUnavailable => 8,
-            Self::ModNotFound | Self::ModConflict => 9,
+            Self::ModNotFound | Self::ModConflict | Self::ModRestricted => 9,
             Self::Config
             | Self::Io
             | Self::Doctor

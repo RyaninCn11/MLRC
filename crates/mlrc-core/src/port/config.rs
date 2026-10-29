@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 7] = [
+pub const KEYS: [&str; 8] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -15,6 +15,7 @@ pub const KEYS: [&str; 7] = [
     "general.default_version",
     "general.mirror",
     "general.game_language",
+    "curseforge.api_key",
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -22,6 +23,28 @@ pub const KEYS: [&str; 7] = [
 pub struct Config {
     pub java: JavaConfig,
     pub general: GeneralConfig,
+    pub curseforge: CurseForgeConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CurseForgeConfig {
+    /// Eternal API key. Empty disables the source. `MLRC_CURSEFORGE_KEY` wins, so a
+    /// key can stay out of the config file.
+    pub api_key: String,
+}
+
+impl CurseForgeConfig {
+    /// The key to send, from the environment first.
+    pub fn key(&self) -> Option<String> {
+        match std::env::var("MLRC_CURSEFORGE_KEY") {
+            Ok(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+            _ => {
+                let value = self.api_key.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -117,6 +140,7 @@ impl Config {
             "general.default_version" => self.general.default_version.clone(),
             "general.mirror" => self.general.mirror.as_str().to_string(),
             "general.game_language" => self.general.game_language.clone(),
+            "curseforge.api_key" => self.curseforge.api_key.clone(),
             other => return Err(unknown_key(other)),
         })
     }
@@ -138,6 +162,15 @@ impl Config {
                 } else {
                     self.java.xmx = stored;
                 }
+            }
+            "curseforge.api_key" => {
+                // `none` clears it, because an empty shell argument is awkward to pass.
+                let cleared = value.trim().is_empty() || value.eq_ignore_ascii_case("none");
+                self.curseforge.api_key = if cleared {
+                    String::new()
+                } else {
+                    value.trim().to_string()
+                };
             }
             "general.default_version" => self.general.default_version = value.to_string(),
             "general.mirror" => {
@@ -186,6 +219,9 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
         }
         "general.mirror" | "mirror" => "general.mirror",
         "general.game_language" | "gameLanguage" | "gamelanguage" => "general.game_language",
+        "curseforge.api_key" | "curseforge.apiKey" | "curseforgeApiKey" | "curseforgeKey" => {
+            "curseforge.api_key"
+        }
         other => return Err(unknown_key(other)),
     })
 }

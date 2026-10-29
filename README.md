@@ -24,6 +24,7 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Set the in-game language before launch (`--lang zh_cn`)
 - [x] Mods from Modrinth: search, install with dependencies, update, remove, enable/disable
 - [x] Import Modrinth modpacks (`.mrpack`) as an instance
+- [x] CurseForge as a second mod source, with a user-supplied API key
 - [ ] Microsoft account login
 - [ ] Quilt loader
 - [ ] Graphical front-end
@@ -122,6 +123,14 @@ mlrc instance import Fabulously.Optimized.mrpack
 mlrc launch --instance Fabulously-Optimized
 ```
 
+CurseForge is a second source. It needs your own API key, and it only answers
+per-project lookups, so pass the numeric project id:
+
+```bash
+mlrc config set curseforge.api_key <key>      # or set MLRC_CURSEFORGE_KEY
+mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
+```
+
 ### Commands
 
 | Command | Purpose |
@@ -132,7 +141,7 @@ mlrc launch --instance Fabulously-Optimized
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
-| `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth, filtered by the version's loader and Minecraft version; installs bring their required dependencies |
+| `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies |
 | `mlrc instance import <pack>.mrpack` | Install a Modrinth modpack as a new instance |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |

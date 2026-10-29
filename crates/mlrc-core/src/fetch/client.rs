@@ -47,6 +47,48 @@ impl HttpClient {
         self.get_bytes_inner(url, None).await
     }
 
+    /// JSON from an API that authenticates with headers of its own (CurseForge's
+    /// `x-api-key`). No mirror rewriting: the API has no mirrored equivalent.
+    pub async fn get_json_with_headers<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        query: &[(&str, String)],
+        headers: &[(&str, String)],
+        timeout: std::time::Duration,
+    ) -> MlrcResult<T> {
+        let mut request = self
+            .inner
+            .get(url)
+            .header(
+                reqwest::header::USER_AGENT,
+                crate::mods::modrinth::user_agent(),
+            )
+            .timeout(timeout);
+
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
+
+        let response = request
+            .query(query)
+            .send()
+            .await
+            .map_err(|err| net_error(url, &err))?;
+
+        if !response.status().is_success() {
+            return Err(http_error(url, response.status()));
+        }
+
+        let bytes = response.bytes().await.map_err(|err| net_error(url, &err))?;
+        serde_json::from_slice(&bytes).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::MetaShape,
+                format!("cannot parse json from {url}: {err}"),
+            )
+            .with("url", url)
+        })
+    }
+
     /// JSON with query parameters. No mirror rewriting: this is for APIs that have
     /// no mirrored equivalent (Modrinth), and reqwest encodes the values properly.
     pub async fn get_json_query<T: DeserializeOwned>(

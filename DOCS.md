@@ -470,7 +470,7 @@ mlrc use <version>
 mlrc uninstall <version>
 mlrc instance create <name> --version <id> [--memory <size>] | list | remove <name>
 mlrc mod search <query> [--mc <ver>] [--loader <name>] [--instance <n>] [--limit N]
-mlrc mod install <project...> [--instance <n>] [--version <id>]
+mlrc mod install <project...> [--source modrinth|curseforge] [--instance <n>] [--version <id>]
 mlrc mod list [--instance <n>] [--version <id>]
 mlrc mod update [--check] [--instance <n>] [--version <id>]
 mlrc mod remove <project|file...> [--instance <n>] [--version <id>]
@@ -534,7 +534,20 @@ including in `-v` logs and `--dry-run` command lines.
 ### 10.6 Mods
 
 `mlrc mod` speaks Modrinth's v2 API: search, and per-project versions filtered by
-`game_versions` and `loaders`.
+`game_versions` and `loaders`. CurseForge is available as a second source with
+`--source curseforge`.
+
+The two sources differ in ways the launcher has to absorb:
+
+- CurseForge authenticates every request with `x-api-key`, and a key belongs to
+  whoever registered it. MLRC never ships one: `curseforge.api_key` (or
+  `MLRC_CURSEFORGE_KEY`, which wins) supplies it, and an empty key simply disables the
+  source.
+- Its search endpoint answers 403 even for keys that may read mods and files, so
+  lookups take a numeric project id. A slug is rejected with the reason instead of a
+  confusing failure.
+- Authors may forbid third-party downloads. Such a file has no `downloadUrl`, and the
+  install stops with `E_MOD_RESTRICTED` rather than silently doing nothing.
 
 - The loader and Minecraft version come from an installed version rather than from
   parsing ids. `inheritsFrom` is the authority, which is also what makes
@@ -548,8 +561,8 @@ including in `-v` logs and `--dry-run` command lines.
   checked against Modrinth's SHA1. A file that is already there is left alone, which
   is what makes a second `mod install` a no-op rather than a re-download.
 - What was installed is recorded in `mods/.mlrc-mods.json`: project slug and id,
-  version, file name, and the platform it was resolved for. Modrinth puts no project
-  identity inside the jar, so nothing else could answer "which project is this?" later.
+  version, file name, and the source it came from. Neither site puts a project identity
+  inside the jar, so nothing else could answer "which project is this?" later.
 - `mod update` re-resolves every recorded project against the recorded platform,
   replaces outdated jars (write, swap, delete the old name) and reports the rest as up
   to date. `--check` stops before downloading.

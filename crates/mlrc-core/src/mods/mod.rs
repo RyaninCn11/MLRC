@@ -1,5 +1,6 @@
 //! Mods: which loader an installed version runs, and installing jars into `mods/`.
 
+pub mod curseforge;
 pub mod manifest;
 pub mod modpack;
 pub mod modrinth;
@@ -83,6 +84,193 @@ pub struct InstalledMod {
 enum Target {
     Project(String),
     Version(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Modrinth,
+    CurseForge,
+}
+
+impl Source {
+    pub fn parse(value: &str) -> MlrcResult<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "modrinth" | "" => Ok(Self::Modrinth),
+            "curseforge" | "cf" => Ok(Self::CurseForge),
+            other => Err(MlrcError::new(
+                ErrorCode::Usage,
+                format!("unknown mod source {other} (expected modrinth or curseforge)"),
+            )),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Modrinth => "modrinth",
+            Self::CurseForge => "curseforge",
+        }
+    }
+}
+
+/// Installs from whichever source the caller picked.
+///
+/// `key` is only needed for CurseForge, which authenticates every request.
+pub async fn install_from(
+    http: &HttpClient,
+    game_dir: &Path,
+    platform: &Platform,
+    project: &str,
+    source: Source,
+    key: Option<&str>,
+    sink: &dyn EventSink,
+) -> MlrcResult<Vec<InstalledMod>> {
+    match source {
+        Source::Modrinth => install(http, game_dir, platform, project, sink).await,
+        Source::CurseForge => {
+            let key = key.ok_or_else(missing_key)?;
+            install_curseforge(http, game_dir, platform, key, project, sink).await
+        }
+    }
+}
+
+fn missing_key() -> MlrcError {
+    MlrcError::new(
+        ErrorCode::Config,
+        "curseforge needs an api key; run `mlrc config set curseforge.api_key <key>` \
+         or set MLRC_CURSEFORGE_KEY",
+    )
+}
+
+async fn install_curseforge(
+    http: &HttpClient,
+    game_dir: &Path,
+    platform: &Platform,
+    key: &str,
+    project: &str,
+    sink: &dyn EventSink,
+) -> MlrcResult<Vec<InstalledMod>> {
+    let mut seen = BTreeSet::new();
+    let mut files = Vec::new();
+    collect_curseforge(
+        http,
+        key,
+        project.to_string(),
+        platform,
+        0,
+        &mut seen,
+        &mut files,
+    )
+    .await?;
+
+    let dir = mods_dir(game_dir);
+    std::fs::create_dir_all(&dir)?;
+
+    let mut manifest = Manifest::load(game_dir)?;
+    manifest.minecraft = platform.mc.clone();
+    manifest.loader = platform.loader.clone();
+
+    let mut installed = Vec::new();
+    for file in files {
+        let target = dir.join(&file.file_name);
+        let mut bytes = None;
+
+        if target.is_file() {
+            installed.push(InstalledMod {
+                name: file.display_name.clone(),
+                filename: file.file_name.clone(),
+                bytes: 0,
+                already_present: true,
+            });
+        } else {
+            sink.emit(Event::FileStarted {
+                path: file.file_name.clone(),
+                total_bytes: Some(file.size).filter(|size| *size > 0),
+            });
+
+            let data = http.get_bytes(&file.download_url).await?;
+            if !file.sha1.is_empty() {
+                let actual = sha1_of(&data);
+                if actual != file.sha1 {
+                    return Err(MlrcError::new(
+                        ErrorCode::HashMismatch,
+                        format!("hash mismatch for {}", file.file_name),
+                    )
+                    .with("expected", file.sha1.clone())
+                    .with("actual", actual));
+                }
+            }
+
+            let part = target.with_extension("jar.part");
+            std::fs::write(&part, &data)?;
+            std::fs::rename(&part, &target)?;
+
+            sink.emit(Event::FileFinished {
+                path: file.file_name.clone(),
+                ok: true,
+                cached: false,
+            });
+
+            installed.push(InstalledMod {
+                name: file.display_name.clone(),
+                filename: file.file_name.clone(),
+                bytes: data.len() as u64,
+                already_present: false,
+            });
+            bytes = Some(data.len() as u64);
+        }
+        let _ = bytes;
+
+        manifest.upsert(Entry {
+            project: file.mod_id.to_string(),
+            project_id: file.mod_id.to_string(),
+            name: file.display_name.clone(),
+            version_id: file.file_id.to_string(),
+            version_number: file.display_name.clone(),
+            filename: file.file_name.clone(),
+            sha1: file.sha1.clone(),
+            source: Source::CurseForge.as_str().to_string(),
+        });
+    }
+
+    manifest.save(game_dir)?;
+    Ok(installed)
+}
+
+async fn collect_curseforge(
+    http: &HttpClient,
+    key: &str,
+    project: String,
+    platform: &Platform,
+    depth: usize,
+    seen: &mut BTreeSet<u64>,
+    out: &mut Vec<curseforge::CfFile>,
+) -> MlrcResult<()> {
+    if depth > 8 {
+        return Ok(());
+    }
+
+    let file = curseforge::resolve(http, key, &project, &platform.mc, &platform.loader).await?;
+    if !seen.insert(file.mod_id) {
+        return Ok(());
+    }
+
+    let required = file.required.clone();
+    out.push(file);
+
+    for dependency in required {
+        Box::pin(collect_curseforge(
+            http,
+            key,
+            dependency.to_string(),
+            platform,
+            depth + 1,
+            seen,
+            out,
+        ))
+        .await?;
+    }
+
+    Ok(())
 }
 
 pub async fn install(
@@ -225,6 +413,7 @@ async fn record(
         version_number: version.version_number.clone(),
         filename: filename.to_string(),
         sha1: String::new(),
+        source: Source::Modrinth.as_str().to_string(),
     });
 }
 
@@ -251,6 +440,7 @@ pub async fn update(
     http: &HttpClient,
     game_dir: &Path,
     check_only: bool,
+    key: Option<&str>,
     sink: &dyn EventSink,
 ) -> MlrcResult<UpdateReport> {
     let mut manifest = Manifest::load(game_dir)?;
@@ -272,13 +462,47 @@ pub async fn update(
             external += 1;
             continue;
         }
-        let latest = modrinth::version_for(
-            http,
-            &entry.project_id,
-            &manifest.minecraft,
-            &manifest.loader,
-        )
-        .await?;
+
+        let source = Source::parse(&entry.source)?;
+        let latest = match source {
+            Source::Modrinth => {
+                let version = modrinth::version_for(
+                    http,
+                    &entry.project_id,
+                    &manifest.minecraft,
+                    &manifest.loader,
+                )
+                .await?;
+                let file = version.primary_file()?.clone();
+                Latest {
+                    id: version.id,
+                    name: version.name,
+                    version_number: version.version_number,
+                    filename: file.filename,
+                    url: file.url,
+                    sha1: file.hashes.sha1,
+                }
+            }
+            Source::CurseForge => {
+                let key = key.ok_or_else(missing_key)?;
+                let file = curseforge::resolve(
+                    http,
+                    key,
+                    &entry.project_id,
+                    &manifest.minecraft,
+                    &manifest.loader,
+                )
+                .await?;
+                Latest {
+                    id: file.file_id.to_string(),
+                    name: file.display_name.clone(),
+                    version_number: file.display_name,
+                    filename: file.file_name,
+                    url: file.download_url,
+                    sha1: file.sha1,
+                }
+            }
+        };
 
         if latest.id == entry.version_id {
             outcomes.push(UpdateOutcome {
@@ -292,34 +516,32 @@ pub async fn update(
             continue;
         }
 
-        let file = latest.primary_file()?.clone();
-
         if check_only {
             outcomes.push(UpdateOutcome {
                 project: entry.project,
                 name: entry.name,
                 from_version: entry.version_number,
                 to_version: Some(latest.version_number.clone()),
-                filename: Some(file.filename.clone()),
+                filename: Some(latest.filename.clone()),
                 bytes: 0,
             });
             continue;
         }
 
         sink.emit(Event::FileStarted {
-            path: file.filename.clone(),
+            path: latest.filename.clone(),
             total_bytes: None,
         });
 
-        let bytes = http.get_bytes(&file.url).await?;
-        if !file.hashes.sha1.is_empty() {
+        let bytes = http.get_bytes(&latest.url).await?;
+        if !latest.sha1.is_empty() {
             let actual = sha1_of(&bytes);
-            if actual != file.hashes.sha1 {
+            if actual != latest.sha1 {
                 return Err(MlrcError::new(
                     ErrorCode::HashMismatch,
-                    format!("hash mismatch for {}", file.filename),
+                    format!("hash mismatch for {}", latest.filename),
                 )
-                .with("expected", file.hashes.sha1.clone())
+                .with("expected", latest.sha1.clone())
                 .with("actual", actual));
             }
         }
@@ -327,9 +549,9 @@ pub async fn update(
         // A disabled mod stays disabled across an update; the suffix is the state.
         let disabled = entry.filename.ends_with(".disabled");
         let new_name = if disabled {
-            format!("{}.disabled", file.filename)
+            format!("{}.disabled", latest.filename)
         } else {
-            file.filename.clone()
+            latest.filename.clone()
         };
 
         // Replace in one step: write beside, then swap, then drop the old name.
@@ -357,6 +579,7 @@ pub async fn update(
             version_number: latest.version_number.clone(),
             filename: new_name.clone(),
             sha1: String::new(),
+            source: entry.source.clone(),
         });
 
         outcomes.push(UpdateOutcome {
@@ -380,6 +603,16 @@ pub async fn update(
 pub struct RemovedMod {
     pub project: String,
     pub filename: String,
+}
+
+/// The newest matching file, from whichever source recorded it.
+struct Latest {
+    id: String,
+    name: String,
+    version_number: String,
+    filename: String,
+    url: String,
+    sha1: String,
 }
 
 pub fn remove(game_dir: &Path, needles: &[String]) -> MlrcResult<Vec<RemovedMod>> {

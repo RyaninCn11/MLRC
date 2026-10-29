@@ -23,9 +23,9 @@ pub struct Manifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
-    /// What the user typed: a slug (`sodium`) or a project id.
+    /// What the user typed, or the mod id for a dependency.
     pub project: String,
-    /// Always Modrinth's id, which is what a lookup can rely on.
+    /// Modrinth project id, or the numeric CurseForge mod id.
     pub project_id: String,
     #[serde(default)]
     pub name: String,
@@ -35,6 +35,10 @@ pub struct Entry {
     pub filename: String,
     #[serde(default)]
     pub sha1: String,
+    /// `modrinth` or `curseforge`. Empty means modrinth: that is what every manifest
+    /// written before the second source existed means.
+    #[serde(default)]
+    pub source: String,
 }
 
 impl Manifest {
@@ -138,6 +142,7 @@ mod tests {
             version_number: String::new(),
             filename: file.to_string(),
             sha1: String::new(),
+            source: String::new(),
         }
     }
 

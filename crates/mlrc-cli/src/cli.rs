@@ -225,14 +225,20 @@ pub enum ModCommand {
         /// Take the loader and version from an installed version
         #[arg(long)]
         version: Option<String>,
+        /// Where to search; curseforge needs an api key and does not expose search
+        #[arg(long, value_name = "SOURCE", default_value = "modrinth")]
+        source: String,
         /// How many results to show
         #[arg(long, default_value_t = 10)]
         limit: u32,
     },
     /// Install mods, together with their required dependencies
     Install {
-        /// Modrinth slug or project id
+        /// Modrinth slug or id; for curseforge the numeric project id
         projects: Vec<String>,
+        /// Where to fetch from
+        #[arg(long, value_name = "SOURCE", default_value = "modrinth")]
+        source: String,
         /// Target an instance's game directory
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
