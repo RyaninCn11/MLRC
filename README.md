@@ -180,7 +180,7 @@ crates/
 `-- mlrc-cli/     binary: argument parsing, rendering, prompts, exit codes
 ```
 
-[DOCS.md](DOCS.md) documents the design and the reasoning behind it.
+[docs/DOCS.md](docs/DOCS.md) is the design and the reasoning behind it; [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers how the code is organised.
 
 ## Mirrors and attribution
 

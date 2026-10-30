@@ -57,7 +57,7 @@ impl ErrorCode {
         }
     }
 
-    /// Process exit code for this error, per the output contract in DOCS.md.
+    /// Process exit code for this error, per the output contract in docs/DOCS.md.
     pub const fn exit_code(self) -> i32 {
         match self {
             Self::Usage => 2,
