@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 9] = [
+pub const KEYS: [&str; 11] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -16,6 +16,8 @@ pub const KEYS: [&str; 9] = [
     "general.mirror",
     "general.game_language",
     "general.proxy",
+    "auth.server",
+    "auth.player_name",
     "curseforge.api_key",
 ];
 
@@ -24,7 +26,28 @@ pub const KEYS: [&str; 9] = [
 pub struct Config {
     pub java: JavaConfig,
     pub general: GeneralConfig,
+    pub auth: AuthConfig,
     pub curseforge: CurseForgeConfig,
+}
+
+/// Who the game says it is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Yggdrasil API root, e.g. `https://littleskin.cn/api/yggdrasil`. Empty means
+    /// offline mode, which is also the default.
+    pub server: String,
+    /// Name used in offline mode; an account's own name wins when one is stored.
+    pub player_name: String,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            server: String::new(),
+            player_name: "Player".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -163,6 +186,8 @@ impl Config {
                     proxy.to_string()
                 }
             }
+            "auth.server" => self.auth.server.clone(),
+            "auth.player_name" => self.auth.player_name.clone(),
             "curseforge.api_key" => self.curseforge.api_key.clone(),
             other => return Err(unknown_key(other)),
         })
@@ -185,6 +210,20 @@ impl Config {
                 } else {
                     self.java.xmx = stored;
                 }
+            }
+            "auth.server" => {
+                // `none` clears it, because an empty shell argument is awkward to pass.
+                let cleared = value.trim().is_empty() || value.eq_ignore_ascii_case("none");
+                self.auth.server = if cleared {
+                    String::new()
+                } else {
+                    crate::auth::validate_server(value)?
+                };
+            }
+            "auth.player_name" => {
+                let name = value.trim();
+                crate::auth::offline::validate_name(name)?;
+                self.auth.player_name = name.to_string();
             }
             "curseforge.api_key" => {
                 // `none` clears it, because an empty shell argument is awkward to pass.
@@ -253,6 +292,8 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
         "general.mirror" | "mirror" => "general.mirror",
         "general.game_language" | "gameLanguage" | "gamelanguage" => "general.game_language",
         "general.proxy" | "proxy" => "general.proxy",
+        "auth.server" | "authServer" | "yggdrasil" | "authserver" => "auth.server",
+        "auth.player_name" | "playerName" | "playername" | "username" => "auth.player_name",
         "curseforge.api_key" | "curseforge.apiKey" | "curseforgeApiKey" | "curseforgeKey" => {
             "curseforge.api_key"
         }

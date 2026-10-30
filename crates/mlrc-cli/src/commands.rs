@@ -33,7 +33,7 @@ use mlrc_core::port::state::{self, InstalledState};
 use mlrc_core::port::DataRoot;
 
 use crate::cli::{
-    CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
+    AuthCommand, CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
     JavaMode as CliJavaMode, MirrorArg, ModCommand,
 };
 use crate::progress::ProgressSink;
@@ -100,8 +100,156 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         Command::Instance { command } => cmd_instance(cli, out, command).await,
         Command::Mod { command } => cmd_mod(cli, out, command).await,
         Command::Java { command } => cmd_java(cli, out, command).await,
-        Command::Auth { .. } => Err(not_implemented("auth", "M5")),
+        Command::Auth { command } => cmd_auth(cli, out, command).await,
     }
+}
+
+async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()> {
+    let root = DataRoot::resolve(cli.data_dir.as_deref())?;
+    root.ensure()?;
+    let mut cfg = Config::load(&root.config_path())?;
+
+    match command {
+        AuthCommand::Login {
+            server,
+            username,
+            password_stdin,
+        } => {
+            let server = server
+                .clone()
+                .or_else(|| Some(cfg.auth.server.clone()).filter(|value| !value.is_empty()))
+                .ok_or_else(|| {
+                    MlrcError::new(
+                        ErrorCode::Usage,
+                        "no authentication server; pass --server or `mlrc config set auth.server <url>`",
+                    )
+                })?;
+            let server = auth::validate_server(&server)?;
+
+            let username = match username {
+                Some(name) => name.clone(),
+                None => prompt_line("username: ")?,
+            };
+            if username.trim().is_empty() {
+                return Err(MlrcError::new(ErrorCode::Usage, "no username given"));
+            }
+
+            let password = if *password_stdin {
+                read_stdin_line()?
+            } else {
+                rpassword::prompt_password("password: ").map_err(|err| {
+                    MlrcError::new(ErrorCode::Io, format!("cannot read the password: {err}"))
+                })?
+            };
+
+            let (client, mirror) = open_client(cli, &root).await?;
+            let session =
+                auth::yggdrasil::authenticate(&client, &server, username.trim(), &password, None)
+                    .await?;
+            session.save(&root)?;
+
+            // Remember the server so `mlrc launch` keeps using it, and fetch the
+            // injector now rather than delaying the first launch.
+            if cfg.auth.server != server {
+                cfg.auth.server = server.clone();
+                cfg.save(&root.config_path())?;
+            }
+            let injector = auth::yggdrasil::ensure_injector(&client, &root, mirror).await?;
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "done",
+                    "account": {
+                        "server": session.server,
+                        "name": session.name,
+                        "uuid": session.uuid,
+                    },
+                    "injector": injector.build,
+                }));
+            } else {
+                out.human(format!(
+                    "signed in as {} ({}) on {}",
+                    session.name, session.uuid, session.server
+                ));
+                out.human(format!("authlib-injector build {}", injector.build));
+            }
+            Ok(())
+        }
+        AuthCommand::Logout => {
+            let session = auth::yggdrasil::Session::load(&root)?;
+            if let Some(session) = session {
+                let (client, _) = open_client(cli, &root).await?;
+                // Best effort: the local file goes away whether or not the server
+                // answers, which is what the user asked for.
+                let _ = auth::yggdrasil::invalidate(&client, &session).await;
+            }
+            let removed = auth::yggdrasil::Session::remove(&root)?;
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "done",
+                    "logged_out": removed,
+                }));
+            } else if removed {
+                out.human("signed out");
+            } else {
+                out.human("no account stored");
+            }
+            Ok(())
+        }
+        AuthCommand::Status => {
+            let session = auth::yggdrasil::Session::load(&root)?;
+            let injector = auth::yggdrasil::cached_injector(&root)?;
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "done",
+                    "account": session.as_ref().map(|session| json!({
+                        "server": session.server,
+                        "username": session.username,
+                        "name": session.name,
+                        "uuid": session.uuid,
+                    })),
+                    "injector": injector.map(|injector| injector.build),
+                }));
+            } else {
+                match &session {
+                    Some(session) => {
+                        out.human(format!("account:  {}", session.name));
+                        out.human(format!("uuid:     {}", session.uuid));
+                        out.human(format!("server:   {}", session.server));
+                        out.human(format!("login:    {}", session.username));
+                    }
+                    None => out.human("account:  none (offline mode)"),
+                }
+                match injector {
+                    Some(injector) => {
+                        out.human(format!("injector: build {}", injector.build));
+                    }
+                    None => out.human("injector: not downloaded"),
+                }
+                out.human(format!("name:     {}", cfg.auth.player_name));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn prompt_line(label: &str) -> MlrcResult<String> {
+    print!("{label}");
+    std::io::stdout().flush()?;
+    read_stdin_line()
+}
+
+fn read_stdin_line() -> MlrcResult<String> {
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|err| MlrcError::new(ErrorCode::Io, format!("cannot read stdin: {err}")))?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
 }
 
 async fn cmd_doctor(cli: &Cli, out: &Out) -> MlrcResult<()> {
@@ -666,7 +814,7 @@ async fn cmd_launch(
     cli: &Cli,
     out: &Out,
     version: Option<&str>,
-    _offline: bool,
+    offline: bool,
     username: Option<&str>,
     width: Option<u32>,
     height: Option<u32>,
@@ -788,12 +936,45 @@ async fn cmd_launch(
     let plan = install::build(&document, &Env::detect())?;
     launch::natives::extract(&plan, &root, &id)?;
 
-    let identity = auth::offline(username.unwrap_or("Player"));
+    // A stored account wins over the configured name; `--username` forces offline
+    // mode, which is how one plays locally under a different name.
+    // `--offline` and `--username` both mean "do not use the stored account".
+    let session = match username {
+        Some(_) => None,
+        None if offline => None,
+        None => auth::yggdrasil::Session::load(&root)?,
+    };
+
+    let mut jvm_args = jvm_args.to_vec();
+    let identity = match &session {
+        Some(session) => {
+            let injector = auth::yggdrasil::cached_injector(&root)?.ok_or_else(|| {
+                MlrcError::new(
+                    ErrorCode::AuthFailed,
+                    "authlib-injector is missing; run `mlrc auth login` again",
+                )
+            })?;
+            jvm_args.push(injector.argument(&session.server));
+            session.identity()
+        }
+        None => {
+            let name = match username {
+                Some(name) => name.to_string(),
+                None if !cfg.auth.player_name.trim().is_empty() => {
+                    cfg.auth.player_name.trim().to_string()
+                }
+                None => "Player".to_string(),
+            };
+            auth::offline::validate_name(&name)?;
+            auth::offline(&name)
+        }
+    };
+
     let options = LaunchOptions {
         width,
         height,
         extra_game_args: game_args.to_vec(),
-        jvm_args: jvm_args.to_vec(),
+        jvm_args,
         memory: heap,
         initial_memory: initial_heap,
         proxy: cfg.general.proxy.clone(),
@@ -2002,11 +2183,4 @@ fn dir_size(dir: &std::path::Path) -> u64 {
         }
     }
     total
-}
-
-fn not_implemented(command: &str, milestone: &str) -> MlrcError {
-    MlrcError::new(
-        ErrorCode::NotImplemented,
-        format!("`{command}` is not implemented yet (planned in {milestone})"),
-    )
 }

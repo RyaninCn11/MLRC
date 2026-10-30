@@ -27,6 +27,7 @@ pub enum ErrorCode {
     ModNotFound,
     ModConflict,
     ModRestricted,
+    AuthFailed,
 }
 
 impl ErrorCode {
@@ -52,6 +53,7 @@ impl ErrorCode {
             Self::ModNotFound => "E_MOD_NOT_FOUND",
             Self::ModConflict => "E_MOD_CONFLICT",
             Self::ModRestricted => "E_MOD_RESTRICTED",
+            Self::AuthFailed => "E_AUTH_FAILED",
         }
     }
 
@@ -65,6 +67,7 @@ impl ErrorCode {
             Self::PortableReadOnly => 7,
             Self::VersionUnknown | Self::VersionIncomplete | Self::LoaderUnavailable => 8,
             Self::ModNotFound | Self::ModConflict | Self::ModRestricted => 9,
+            Self::AuthFailed => 4,
             Self::Config
             | Self::Io
             | Self::Doctor

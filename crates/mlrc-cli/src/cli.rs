@@ -312,9 +312,19 @@ pub enum JavaCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum AuthCommand {
-    /// Sign in with a Microsoft account
-    Login,
-    /// Remove stored credentials
+    /// Sign in to a Yggdrasil server (third-party authentication)
+    Login {
+        /// API root, e.g. https://littleskin.cn/api/yggdrasil. Defaults to auth.server.
+        #[arg(long, value_name = "URL")]
+        server: Option<String>,
+        /// Name or email. Asked for when omitted.
+        #[arg(long, short = 'u')]
+        username: Option<String>,
+        /// Read the password from the first line of stdin instead of prompting.
+        #[arg(long)]
+        password_stdin: bool,
+    },
+    /// Forget the stored account and revoke its token
     Logout,
     /// Show the current account
     Status,

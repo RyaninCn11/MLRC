@@ -133,6 +133,17 @@ impl DataRoot {
         self.mlrc_dir().join("java")
     }
 
+    /// Stored Yggdrasil session. Plaintext, like every other launcher's profile file;
+    /// it lives beside the executable because the layout is portable by design.
+    pub fn auth_path(&self) -> PathBuf {
+        self.mlrc_dir().join("auth.json")
+    }
+
+    /// Downloaded authlib-injector jars, one per build.
+    pub fn injector_dir(&self) -> PathBuf {
+        self.mlrc_dir().join("injector")
+    }
+
     pub fn jdk_dir(&self, major: u32) -> PathBuf {
         self.java_dir().join(format!("jdk-{major}"))
     }

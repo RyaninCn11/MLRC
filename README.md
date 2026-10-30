@@ -16,7 +16,8 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Content-addressed cache with hardlinks, so versions share jars and assets
 - [x] SHA1 verification of every downloaded file
 - [x] Official Mojang sources and BMCLAPI, with per-file fallback
-- [x] Launch the game offline with a derived player identity
+- [x] Launch the game offline with a derived player identity, named however you like
+- [x] Yggdrasil login for third-party authentication servers (LittleSkin, Ely.by, ...)
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
 - [x] Fabric, Quilt, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|quilt|forge|neoforge`
@@ -95,6 +96,24 @@ mlrc launch --lang zh_cn
 mlrc config set gameLanguage zh_cn      # every launch
 ```
 
+Play under your own name, offline:
+
+```bash
+mlrc config set playerName Steve        # or: mlrc launch --username Steve
+```
+
+Or sign in to a third-party authentication server, which also gives you skins and
+lets you join that service's online-mode servers:
+
+```bash
+mlrc auth login --server https://littleskin.cn/api/yggdrasil --username you@example.com
+mlrc auth status
+mlrc auth logout
+```
+
+The password is asked for, never stored; the token goes to `MLRC/auth.json` and
+`mlrc launch` uses it from then on. `--username` on `launch` forces offline mode.
+
 Modded packs need more than the 2G default heap:
 
 ```bash
@@ -145,6 +164,7 @@ mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies, `--dry-run` shows them first |
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
+| `mlrc auth login \| logout \| status` | Sign in to a Yggdrasil server, forget it, or show it |
 | `mlrc config get \| set \| list` | Read or write `config.toml` |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |
 | `mlrc doctor` | Check the data directory, network, runtimes and versions |
@@ -167,6 +187,10 @@ default_version = ""
 mirror = "auto"     # auto | official | bmclapi
 proxy = "auto"      # auto | none | host:port; also passed to the game's JVM
 game_language = ""  # e.g. zh_cn; empty leaves the game's own setting
+
+[auth]
+server = ""         # Yggdrasil API root, e.g. https://littleskin.cn/api/yggdrasil
+player_name = "Player"   # offline name, when no account is stored
 ```
 
 Exit codes are stable: `0` success, `2` usage, `3` network, `4` authentication,

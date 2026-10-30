@@ -108,6 +108,30 @@ impl HttpClient {
         })
     }
 
+    /// POST a JSON body and return the status with the raw answer.
+    ///
+    /// Yggdrasil reports failures in the body with a 4xx status, so the caller needs
+    /// both halves: the status alone loses the reason, and the body alone loses
+    /// whether it was a failure at all.
+    pub async fn post_json_raw(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> MlrcResult<(u16, Vec<u8>)> {
+        let response = self
+            .inner
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|err| net_error(url, &err))?;
+
+        let status = response.status().as_u16();
+        let bytes = response.bytes().await.map_err(|err| net_error(url, &err))?;
+        Ok((status, bytes.to_vec()))
+    }
+
     /// JSON with query parameters. No mirror rewriting: this is for APIs that have
     /// no mirrored equivalent (Modrinth), and reqwest encodes the values properly.
     pub async fn get_json_query<T: DeserializeOwned>(

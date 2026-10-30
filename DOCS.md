@@ -171,8 +171,10 @@ behind the user's back.
 |       `-- options.txt  servers.dat    the game directory is this same folder
 `-- MLRC/
     |-- config.toml
+    |-- auth.json                       Yggdrasil session, when one is stored
     |-- cache/objects/<aa>/<full sha1>  one copy of every file, hardlinked into place
     |-- java/jdk-<major>/               managed runtimes, keyed by major
+    |-- injector/authlib-injector-<build>.jar
     |-- meta/                           manifest and runtime index caches
     |-- logs/                           installer output and the launcher's own log
     `-- tmp/                            `-Djava.io.tmpdir` for the game
@@ -383,9 +385,33 @@ returned to the caller unchanged.
 
 ### 8.4 Identity
 
-Offline identity derives the UUID as MD5 of `OfflinePlayer:<name>` with the RFC 4122
-version-3 and variant bits applied. The access token is a placeholder; online-mode
-servers reject it, which is the point. `--uuid` is passed without dashes.
+Three sources, in the order they win:
+
+1. a Yggdrasil account stored by `mlrc auth login`, when one exists;
+2. `auth.player_name` from the config, in offline mode (the default);
+3. `--username`, which forces offline mode.
+
+**Offline.** The UUID is MD5 of `OfflinePlayer:<name>` with the RFC 4122 version-3 and
+variant bits applied; the token is a placeholder, so online-mode servers reject it,
+which is the point. `--uuid` is passed without dashes. Names follow Mojang's rule -
+1-16 characters of `[A-Za-z0-9_]` - because a name the game accepts but a server
+rejects is a trap.
+
+**Yggdrasil.** Third-party authentication servers speak the protocol Mojang used
+before Microsoft accounts. `mlrc auth login --server <url>` posts the credentials to
+`<url>/authserver/authenticate`, stores the returned token and profile in
+`MLRC/auth.json`, and downloads authlib-injector. Launching then passes the token as
+`--accessToken`, the profile name and UUID, `--userType mojang`, and the injector as
+`-javaagent:<jar>=<url>`.
+
+The injector is not optional: it is what redirects the client's own session requests
+to the same server. Without it the game authenticates locally and then fails to join
+an online-mode server on that service, with an error that blames the server.
+
+The file is plaintext, like every launcher's profile file, and lives beside the
+executable because the layout is portable: moving the folder moves the account. On
+Unix it is written `0600`; on Windows the account's ACL already keeps it private.
+`mlrc auth logout` revokes the token server-side and deletes the file.
 
 ### 8.5 Game directory and forks
 
@@ -532,7 +558,7 @@ mlrc mod disable <project...> [--instance <n>] [--version <id>]
 mlrc mod enable <project...> [--instance <n>] [--version <id>]
 mlrc instance import <pack>.mrpack|<pack>.zip [--dry-run] [--name <n>] [--java=auto|install|skip]
 mlrc java list | install <component|major> | remove <major>
-mlrc auth login | logout | status
+mlrc auth login [--server <url>] [--username <n>] [--password-stdin] | logout | status
 mlrc config get <key> | set <key> <value> | list
 mlrc cache prune [--keep-days N]
 mlrc doctor
@@ -561,7 +587,7 @@ E_USAGE              E_NET_HTTP           E_NET_HASH
 E_META_SHAPE         E_PORTABLE_READONLY  E_CONFIG
 E_VERSION_UNKNOWN    E_VERSION_INCOMPLETE E_CACHE_STALE
 E_JAVA_MISSING       E_JAVA_TOO_OLD       E_JAVA_META_MISSING
-E_JAVA_IN_USE        E_AUTH_ENTITLEMENT   E_NOT_IMPLEMENTED
+E_JAVA_IN_USE        E_AUTH_FAILED        E_NOT_IMPLEMENTED
 E_LOADER_UNAVAILABLE E_MOD_NOT_FOUND      E_MOD_CONFLICT
 E_MOD_RESTRICTED     E_DOCTOR_FAILED      E_IO
 ```

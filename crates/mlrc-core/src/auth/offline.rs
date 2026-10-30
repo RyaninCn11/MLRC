@@ -6,6 +6,8 @@
 
 use md5::{Digest, Md5};
 
+use crate::error::{ErrorCode, MlrcError, MlrcResult};
+
 #[derive(Debug, Clone)]
 pub struct Identity {
     pub name: String,
@@ -14,6 +16,29 @@ pub struct Identity {
     pub user_type: String,
     pub xuid: String,
     pub client_id: String,
+}
+
+/// Mojang's own rule: 1-16 characters, letters, digits and underscore.
+///
+/// Offline servers tolerate more, but a name that would be rejected by an
+/// online-mode server is a trap worth refusing up front, and the game's own UI uses
+/// the same rule.
+pub fn validate_name(name: &str) -> MlrcResult<()> {
+    let valid = !name.is_empty()
+        && name.chars().count() <= 16
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+
+    if valid {
+        Ok(())
+    } else {
+        Err(MlrcError::new(
+            ErrorCode::Usage,
+            format!("invalid player name {name}: 1-16 characters, letters, digits and '_'"),
+        )
+        .with("name", name.to_string()))
+    }
 }
 
 pub fn offline(name: &str) -> Identity {
