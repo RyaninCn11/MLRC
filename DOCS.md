@@ -71,8 +71,11 @@ Four properties of this data shape the code:
    not set JVM flags, and its first entry has no `rules` at all. The key is
    kebab-case, so a `rename_all = "camelCase"` model silently reads it as empty.
 4. **Natives have two generations.** Libraries carrying `natives`/`extract` (up to
-   1.18) must be unpacked into `natives/`; 1.19+ puts native jars on the classpath and
-   lets LWJGL extract them. Decide from the library entry, never from the version id.
+   1.18) must be unpacked into `java/`, which is what `java.library.path` names; 1.19+
+   puts native jars on the classpath and lets LWJGL extract them. Decide from the
+   library entry, never from the version id. Splitting the extracted DLLs by library
+   family looks tidier and breaks the game: LWJGL asks the library path, not the
+   family directory.
 
 ---
 
@@ -351,8 +354,7 @@ the launcher before rule evaluation, never inferred from the version.
 Old versions ship native jars the launcher must unpack; since 1.19 they ride on the
 classpath and LWJGL unpacks what it needs itself, so an empty set is normal.
 
-The layout follows the launcher we imitate: one root per version with four areas, each
-native family in its own so two libraries cannot clobber each other's files.
+The layout follows the launcher we imitate: one root per version with four areas.
 
 ```
 versions/<id>/<id>-natives/
@@ -365,6 +367,12 @@ versions/<id>/<id>-natives/
 Mojang's documents point all four properties at one directory; the launcher rewrites
 the three that name a family so each has its own, which is what the launcher this
 project imitates does.
+
+Everything the launcher unpacks goes into `java/`, including LWJGL's DLLs for 1.18 and
+older. The family split is for libraries that unpack themselves at runtime, and a
+document that extracts natives loads them through `java.library.path` - files placed in
+`lwjgl/` are invisible to it, which shows up as `Failed to load a library` and a
+`NoClassDefFoundError` on `RenderSystem`.
 
 ### 8.3 Process
 

@@ -199,9 +199,12 @@ async fn install_prepared(
             root.libraries_dir().join(&library.path),
         );
     }
+    // Launcher-extracted natives all go to `java/`: that is the directory
+    // `-Djava.library.path` points at, and pre-1.19 LWJGL loads its DLLs through it
+    // instead of unpacking them itself. The other three areas belong to libraries
+    // that ride the classpath and extract at runtime.
     for native in &plan.natives {
-        let dir = crate::launch::natives::natives_root(root, id)
-            .join(crate::launch::natives::category(native));
+        let dir = crate::launch::natives::natives_root(root, id).join("java");
         add(&mut files, native, dir.join(native.file_name()));
     }
     if let Some(logging) = &plan.logging {
