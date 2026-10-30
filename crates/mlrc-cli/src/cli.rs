@@ -119,13 +119,13 @@ pub enum Command {
         game_args: Vec<String>,
     },
 
-    /// Manage named game directories
+    /// Manage forks: versions with their own worlds and mods
     Instance {
         #[command(subcommand)]
         command: InstanceCommand,
     },
 
-    /// Search and install mods from Modrinth
+    /// Search and install mods from Modrinth or CurseForge
     Mod {
         #[command(subcommand)]
         command: ModCommand,
@@ -150,7 +150,7 @@ pub enum Command {
         command: JavaCommand,
     },
 
-    /// Manage Microsoft accounts
+    /// Manage the account used to launch the game
     Auth {
         #[command(subcommand)]
         command: AuthCommand,

@@ -10,23 +10,16 @@ a graphical interface can reuse the same engine without touching it.
 
 ## Features
 
-- [x] Install any vanilla version, one version per command
-- [x] Managed Java runtimes, one per required major
-- [x] Portable layout: no writes outside the distribution folder
-- [x] Content-addressed cache with hardlinks, so versions share jars and assets
-- [x] SHA1 verification of every downloaded file
-- [x] Official Mojang sources and BMCLAPI, with per-file fallback
-- [x] Launch the game offline with a derived player identity, named however you like
-- [x] Yggdrasil login for third-party authentication servers (LittleSkin, Ely.by, ...)
-- [x] Machine-readable output: stable exit codes, error codes, NDJSON events
-- [x] Install health checks (`mlrc doctor`)
-- [x] Fabric, Quilt, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|quilt|forge|neoforge`
-- [x] Forks: a version that inherits another and keeps its own worlds and mods
-- [x] Set the in-game language before launch (`--lang zh_cn`)
-- [x] Mods from Modrinth: search, install with dependencies, update, remove, enable/disable
-- [x] Import Modrinth modpacks (`.mrpack`) as an instance
-- [x] Import CurseForge modpacks (`.zip`), the same way
-- [x] CurseForge as a second mod source, with a user-supplied API key
+- [x] Install any vanilla version, one per command, with SHA1-verified downloads from
+  Mojang or BMCLAPI
+- [x] Managed Java runtimes, one per major, so `JAVA_HOME` never breaks a version
+- [x] Portable: one folder holds everything, and nothing is written outside it
+- [x] Fabric, Quilt, Forge and NeoForge, installed through the same command
+- [x] Forks: a copy of a version that keeps its own worlds and mods
+- [x] Mods and modpacks from Modrinth and CurseForge
+- [x] Offline play under any name, or Yggdrasil login for third-party servers
+- [x] Machine-readable output: exit codes, error codes, NDJSON events
+- [x] `mlrc doctor` for when something is wrong
 - [ ] Microsoft account login
 - [ ] Graphical front-end
 
@@ -50,107 +43,74 @@ cargo build --release
 ## Usage
 
 ```bash
-mlrc install 1.18.2          # asks before installing the Java 17 runtime
-mlrc launch 1.18.2           # starts the game
+mlrc install 1.18.2        # asks before installing the Java 17 runtime
+mlrc launch 1.18.2
+mlrc use 1.18.2            # remember it for a bare `mlrc launch`
 ```
 
+**Modded.** Loaders are installed by the same command, and the id it prints is what
+you launch:
+
 ```bash
-mlrc install 26.3 --java=install --threads 16
-mlrc use 26.3                # remember the default version
-mlrc launch                  # uses the default
+mlrc install 1.21.1 --loader fabric       # or quilt
+mlrc install 1.21.1 --loader neoforge     # or forge
+mlrc launch fabric-loader-0.20.1-1.21.1
 ```
 
-Slow connection to Mojang? Use a mirror:
+**A second world set.** Every version has its own folder, so a fork is what you want:
 
 ```bash
-mlrc --mirror bmclapi install 1.12.2
-```
-
-`--mirror auto` (the default) times both sources once and remembers the faster one.
-
-Modded, or want separate worlds? Every version already has its own folder, so a fork
-is how you get a second world set for the same Minecraft version:
-
-```bash
-mlrc install 1.21.1 --loader fabric
-mlrc instance create survival --version fabric-loader-0.20.1-1.21.1
+mlrc instance create survival --version fabric-loader-0.20.1-1.21.1 --memory 4G
 mlrc launch --instance survival
 ```
 
-Forge and NeoForge are installed by running their own installer, then launched like
-any other version:
+**Mods.** Modrinth by default; required dependencies come with them.
 
 ```bash
-mlrc install 1.21.1 --loader forge
-mlrc launch 1.21.1-forge-52.1.20
-
-mlrc install 1.21.1 --loader neoforge
-mlrc launch neoforge-21.1.265
+mlrc mod install iris --instance survival      # also installs Sodium
+mlrc mod list --instance survival
+mlrc mod update --instance survival --check
+mlrc mod disable lithium --instance survival    # renamed, not deleted
 ```
 
-Want the game itself in another language? Minecraft has no launch switch for it, so
-MLRC writes the line into `options.txt` before starting:
-
-```bash
-mlrc launch --lang zh_cn
-mlrc config set gameLanguage zh_cn      # every launch
-```
-
-Play under your own name, offline:
-
-```bash
-mlrc config set playerName Steve        # or: mlrc launch --username Steve
-```
-
-Or sign in to a third-party authentication server, which also gives you skins and
-lets you join that service's online-mode servers:
-
-```bash
-mlrc auth login --server https://littleskin.cn/api/yggdrasil --username you@example.com
-mlrc auth status
-mlrc auth logout
-```
-
-The password is asked for, never stored; the token goes to `MLRC/auth.json` and
-`mlrc launch` uses it from then on. `--username` on `launch` forces offline mode.
-
-Modded packs need more than the 2G default heap:
-
-```bash
-mlrc launch 1.21.1-forge-52.1.20 --memory 6G
-mlrc config set java.xmx 6G             # every launch
-mlrc instance create big --version neoforge-21.1.265 --memory 8G
-```
-
-Mods come from Modrinth, filtered by the loader and Minecraft version of the version
-you point at; required dependencies are installed with them:
-
-```bash
-mlrc mod search sodium --instance big
-mlrc mod install iris --instance big      # also installs Sodium
-mlrc mod list --instance big
-mlrc mod update --instance big --check    # what is out of date
-mlrc mod disable lithium --instance big   # renamed to .jar.disabled
-mlrc mod remove sodium --instance big
-```
-
-A whole modpack installs as one instance: the loader it pins, its overrides, and its
-mods. Both formats work: Modrinth `.mrpack` and CurseForge `.zip` (the latter needs
-the API key).
+**Packs.** `instance import` installs the loader a pack pins, its overrides and its
+mods. Modrinth `.mrpack` and CurseForge `.zip` both work:
 
 ```bash
 mlrc instance import Fabulously.Optimized.mrpack
 mlrc launch --instance Fabulously-Optimized
 ```
 
-CurseForge is a second source. It needs your own API key, and it only answers
-per-project lookups, so pass the numeric project id:
+**CurseForge** is a second source. It needs your own key and answers by project id:
 
 ```bash
-mlrc config set curseforge.api_key <key>      # or set MLRC_CURSEFORGE_KEY
-mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
+mlrc config set curseforge.api_key <key>      # or export MLRC_CURSEFORGE_KEY
+mlrc mod install 238222 --source curseforge    # Just Enough Items
 ```
 
+**Identity.** Offline by default, under the name you pick:
+
+```bash
+mlrc config set playerName Steve              # or `mlrc launch --username Steve`
+```
+
+Or sign in to a third-party Yggdrasil server, which adds skins and access to that
+service's online-mode servers. The password is asked for and never stored:
+
+```bash
+mlrc auth login --server https://littleskin.cn/api/yggdrasil --username you@example.com
+mlrc auth status
+```
+
+**Tuning.** Heap, language and download source, per run or remembered:
+
+```bash
+mlrc launch --memory 6G
+mlrc config set java.xmx 6G
+mlrc launch --lang zh_cn
+mlrc config set gameLanguage zh_cn
+mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
+```
 ### Commands
 
 | Command | Purpose |
@@ -160,7 +120,7 @@ mlrc mod install 238222 --source curseforge   # 238222 is Just Enough Items
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
-| `mlrc instance create \| list \| remove` | Named game directories bound to a version (`--memory` per instance) |
+| `mlrc instance create \| list \| remove` | Forks: a version with its own worlds and mods, sharing the parent's files (`--memory` each) |
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies, `--dry-run` shows them first |
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
@@ -177,20 +137,20 @@ Global flags: `--data-dir`, `--json`, `--quiet`, `-v`, `--mirror`.
 
 ```toml
 [java]
-custom = false      # true: use a host JDK instead of managed runtimes
+custom = false      # true: honour java.path, JAVA_HOME and PATH
 path = ""           # explicit java binary
-xms = ""            # initial heap, e.g. 1G; empty leaves Java's default
-xmx = "2G"          # maximum heap; a --memory flag or an instance overrides it
+xms = ""            # initial heap; empty leaves the JVM default
+xmx = "2G"          # maximum heap; --memory and a fork's own value override it
 
 [general]
 default_version = ""
 mirror = "auto"     # auto | official | bmclapi
 proxy = "auto"      # auto | none | host:port; also passed to the game's JVM
-game_language = ""  # e.g. zh_cn; empty leaves the game's own setting
+game_language = ""  # e.g. zh_cn
 
 [auth]
-server = ""         # Yggdrasil API root, e.g. https://littleskin.cn/api/yggdrasil
-player_name = "Player"   # offline name, when no account is stored
+server = ""              # Yggdrasil API root; empty means offline only
+player_name = "Player"   # offline name
 ```
 
 Exit codes are stable: `0` success, `2` usage, `3` network, `4` authentication,
@@ -199,15 +159,16 @@ emits NDJSON events carrying the same error codes.
 
 ## How it works
 
-- **Portable by default.** Everything lives next to the executable: `.minecraft` for the standard layout, `MLRC` for the launcher's own data. If the
-  folder is not writable the launcher fails with `E_PORTABLE_READONLY` instead of
-  relocating into the user profile.
+- **Portable by default.** Everything lives next to the executable: `.minecraft` for
+  the standard layout, `MLRC` for the launcher's own data. If the folder is not
+  writable the launcher fails with `E_PORTABLE_READONLY` instead of relocating into the
+  user profile.
 - **Hashes are the authority.** Every file is checked against the SHA1 from Mojang's
-  metadata. A mirror is only a URL substitution; a file it does not carry falls back
-  to the official URL.
-- **Java is pinned per version.** Runtimes are stored under `MLRC/java/jdk-<major>/`
-  and the host JDK is ignored unless `customJava=true`, so a system JDK upgrade cannot
-  break an installed version.
+  metadata. A mirror is only a URL substitution; a file it does not carry falls back to
+  the official URL.
+- **Java is pinned per version.** Runtimes live under `MLRC/java/jdk-<major>/` and the
+  host JDK is ignored unless `java.custom=true`, so a system JDK upgrade cannot break an
+  installed version.
 - **One engine, two front-ends.** `mlrc-core` never prints and emits events; the CLI
   renders them as text or NDJSON.
 
