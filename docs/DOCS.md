@@ -2,7 +2,7 @@
 
 MLRC installs one Minecraft: Java Edition version per command, provisions the Java
 runtime that version declares, and starts the game. The engine is a library with no
-terminal dependencies, so a graphical front-end can link it without reimplementing
+terminal dependencies, so another front-end can link it without reimplementing
 anything.
 
 This is the design: what the launcher does and why. Implementation details - metadata
@@ -23,7 +23,7 @@ quirks, merge rules, module map - live in [DEVELOPMENT.md](DEVELOPMENT.md).
 ### Out of scope
 
 - Bundling or redistributing any Minecraft file; everything is fetched on demand.
-- A GUI inside this repository; the engine is shaped so one can be added.
+- A GUI: this is a command-line launcher.
 - Publishing or hosting mods; MLRC only installs from Modrinth and CurseForge.
 - Mojang's own account system: Microsoft login, entitlements.
 
@@ -362,6 +362,6 @@ stream.
   and an explicit `objects.txt` list rather than link counts for what may be deleted.
 - **Official hashes are the only authority.** Mirrors move bytes, never trust.
 - **The engine never prints and never prompts.** Interaction is the caller's job, which
-  is what lets a GUI link the same crate.
+  is what lets another front-end link the same crate.
 - **Offline mode is first-class.** It makes the launcher testable without an account and
   is the only way to play on a LAN without Mojang's services.

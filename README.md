@@ -6,7 +6,7 @@ provisions the Java runtime the version declares, and launches the game.
 
 Everything lives next to the executable, so the installation is a folder you can move
 or copy. The launcher is split into an engine (`mlrc-core`) and a CLI (`mlrc-cli`), so
-a graphical interface can reuse the same engine without touching it.
+other tools can reuse the engine without touching it.
 
 ## Features
 
@@ -21,7 +21,6 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Machine-readable output: exit codes, error codes, NDJSON events
 - [x] `mlrc doctor` for when something is wrong
 - [ ] Microsoft account login
-- [ ] Graphical front-end
 
 ## Requirements
 
@@ -169,8 +168,8 @@ emits NDJSON events carrying the same error codes.
 - **Java is pinned per version.** Runtimes live under `MLRC/java/jdk-<major>/` and the
   host JDK is ignored unless `java.custom=true`, so a system JDK upgrade cannot break an
   installed version.
-- **One engine, two front-ends.** `mlrc-core` never prints and emits events; the CLI
-  renders them as text or NDJSON.
+- **An engine and a CLI.** `mlrc-core` never prints and emits events; the CLI renders
+  them as text or NDJSON.
 
 ## Project layout
 

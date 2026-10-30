@@ -56,8 +56,8 @@ pub enum Event {
 pub trait EventSink: Send + Sync { fn emit(&self, event: Event); }
 ```
 
-`JavaRequired` is a question, not a prompt: the CLI renders `[Y/n]`, a GUI renders a
-dialog, `--json` emits a line plus exit 5. The engine never reads stdin.
+`JavaRequired` is a question, not a prompt: the CLI renders `[Y/n]`, a caller with its
+own UI shows a dialog, `--json` emits a line plus exit 5. The engine never reads stdin.
 
 ---
 
