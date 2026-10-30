@@ -530,10 +530,22 @@ E_META_SHAPE         E_PORTABLE_READONLY  E_CONFIG
 E_VERSION_UNKNOWN    E_VERSION_INCOMPLETE E_CACHE_STALE
 E_JAVA_MISSING       E_JAVA_TOO_OLD       E_JAVA_META_MISSING
 E_JAVA_IN_USE        E_AUTH_ENTITLEMENT   E_NOT_IMPLEMENTED
+E_LOADER_UNAVAILABLE E_MOD_NOT_FOUND      E_MOD_CONFLICT
+E_MOD_RESTRICTED     E_DOCTOR_FAILED      E_IO
 ```
 
 Messages are English and final. The code is the contract; a front-end maps codes to
 its own strings, which is why C1 forbids translated text in the engine.
+
+The message itself has a shape, enforced by `tests/error_style.rs`:
+
+- one lowercase sentence, no trailing period, no `error:` prefix, no newlines;
+- it says what failed and, when the next step is known, what to do about it;
+- a command inside it is backticked, so it is unambiguous where the sentence ends.
+
+Details go in `context`, never in the sentence: ids, urls, status codes, counts. The
+one reserved key is `hint`, printed on its own line - it is advice, not data. The CLI
+renders context as `key=value` pairs; JSON output keeps the object.
 
 ### 10.4 NDJSON
 
@@ -544,6 +556,21 @@ its own strings, which is why C1 forbids translated text in the engine.
 {"schema":1,"event":"java_required","component":"java-runtime-beta","major":17}
 {"schema":1,"event":"file_finished","path":"1.18.2.jar","ok":true,"cached":false}
 {"schema":1,"event":"done","message":"installed 1.18.2","ok":true}
+```
+
+`doctor` differs on purpose: one event carries the whole report, because a consumer
+asking "is this installation healthy" should not have to reassemble an answer from a
+stream.
+
+```json
+{"schema":1,"event":"doctor","ok":false,"failed":1,"warned":1,
+ "checks":[{"name":"network","status":"fail","detail":"..."}]}
+```
+
+Errors arrive as their own event with the same code the exit status would carry:
+
+```json
+{"schema":1,"event":"error","code":"E_USAGE","message":"...","context":{"version":"1.21.1"}}
 ```
 
 `schema` is versioned so a front-end can refuse an engine it does not understand.
@@ -624,6 +651,7 @@ The two sources differ in ways the launcher has to absorb:
 | Unit | rule matrix, argument templating, inheritance merge, offline UUID, java version parsing, proxy selection, memory values, loader detection, manifest bookkeeping, pack path safety |
 | Fixtures | real documents in the repository: 1.6.4 (legacy arguments), 1.12.2, 1.18.2 (extract rules), 1.21.x, 26.3 |
 | Integration | `crates/mlrc-core/tests/install_flow.rs`: a real HTTP server on 127.0.0.1, a seeded manifest cache, then a full install. Asserts the layout, the bytes on disk, `installed.json`, `objects.txt`; that a corrupted download fails with `E_NET_HASH` and leaves no complete state; that a second install restores a deleted file from the store; that a truncated response fails the run and the next one finishes the job; and that the event stream keeps the documented shape |
+| Style | `crates/mlrc-core/tests/error_style.rs` scans every `MlrcError::new` call and rejects a capital letter, a trailing period, an `error:` prefix, a newline, or an unbackticked `mlrc ...` command |
 | CI | `fmt`, `clippy -D warnings`, `test` on Windows and Linux, and an ASCII-only source check that enforces C1 |
 
 The integration test never touches the internet: the engine reads its manifest cache

@@ -53,7 +53,27 @@ pub fn error(out: &Out, err: &MlrcError) {
             eprintln!("  hint: {hint}");
         }
         if !err.context.is_null() {
-            eprintln!("  context: {}", err.context);
+            // `key=value` reads better than JSON in a terminal, and the values are
+            // short by construction: ids, urls, status codes, counts.
+            let pairs: Vec<String> = err
+                .context
+                .as_object()
+                .map(|map| {
+                    map.iter()
+                        .filter(|(key, _)| key.as_str() != "hint")
+                        .map(|(key, value)| {
+                            let text = match value {
+                                serde_json::Value::String(text) => text.clone(),
+                                other => other.to_string(),
+                            };
+                            format!("{key}={text}")
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !pairs.is_empty() {
+                eprintln!("  context: {}", pairs.join(" "));
+            }
         }
     }
 }

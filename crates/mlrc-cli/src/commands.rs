@@ -110,23 +110,40 @@ async fn cmd_doctor(cli: &Cli, out: &Out) -> MlrcResult<()> {
     let cfg = Config::load(&root.config_path())?;
     let (client, _) = open_client(cli, &root).await?;
     let checks = doc::run(&root, &cfg, &client).await;
+    let failed = checks.iter().filter(|c| c.status == Status::Fail).count();
+    let warned = checks.iter().filter(|c| c.status == Status::Warn).count();
 
-    for check in &checks {
-        out.human(format!(
-            "{:<14}{}",
-            format!("{}:", check.name),
-            check.detail
-        ));
+    if out.is_json() {
+        // One event for the whole report: a consumer should not have to reassemble the
+        // picture from a stream of individual checks.
+        let items: Vec<_> = checks
+            .iter()
+            .map(|check| {
+                json!({
+                    "name": check.name,
+                    "status": check.status.as_str(),
+                    "detail": check.detail,
+                })
+            })
+            .collect();
         out.json_event(json!({
             "schema": 1,
-            "event": "check",
-            "name": check.name,
-            "status": check.status.as_str(),
-            "detail": check.detail,
+            "event": "doctor",
+            "ok": failed == 0,
+            "failed": failed,
+            "warned": warned,
+            "checks": items,
         }));
+    } else {
+        for check in &checks {
+            out.human(format!(
+                "{:<14}{}",
+                format!("{}:", check.name),
+                check.detail
+            ));
+        }
     }
 
-    let failed = checks.iter().filter(|c| c.status == Status::Fail).count();
     if failed > 0 {
         return Err(MlrcError::new(
             ErrorCode::Doctor,
@@ -134,7 +151,6 @@ async fn cmd_doctor(cli: &Cli, out: &Out) -> MlrcResult<()> {
         ));
     }
 
-    out.json_event(json!({"schema": 1, "event": "done", "ok": true}));
     Ok(())
 }
 
