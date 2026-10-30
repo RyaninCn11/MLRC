@@ -185,11 +185,22 @@ The mechanics are in [DEVELOPMENT.md](DEVELOPMENT.md#7-loaders).
 
 ### 4.4 Listing what can be installed
 
-`mlrc install --list` prints every version the manifest knows, newest first: the whole
-list, because a launcher that hides snapshots or old releases is making a choice for
-the user. With `--loader`, it prints only the versions that loader has a build for -
-one request, since each loader publishes its coverage (the meta APIs list supported
-game versions, the Forge and NeoForge maven metadata is mapped back to Minecraft ids).
+`mlrc install --list` prints the versions the manifest knows, newest first, and then
+asks how many to show: `show the first (10/921)`, Enter for ten, a number for that
+many, `all` for the rest. The question exists because the answer is 921 lines and a
+terminal is a bad place to discover that. A pipe, `--json` and `--limit N` skip it and
+behave deterministically; `--limit 0` prints everything.
+
+`--type` narrows to one category - `release`, `snapshot`, `old_beta`, `old_alpha` or
+`april_fools` - and composes with `--loader`. Coverage comes from each loader's own
+source in one request: the meta APIs publish their supported game versions, and the
+Forge and NeoForge maven metadata is mapped back to Minecraft ids and filtered against
+the manifest, so a repository alias never appears as a version that cannot be installed.
+
+`april_fools` is derived rather than read: the manifest marks those builds as ordinary
+snapshots. A snapshot released on 1 April counts, plus the ones named in a short list
+(`1.RV-Pre1` shipped on 31 March). That is a heuristic, and it is the best the metadata
+allows; a normal snapshot shipped on 1 April would be misclassified.
 
 Mods get no such list on purpose: there is no bounded answer, and `mlrc mod search` is
 the question people actually have.
@@ -278,6 +289,7 @@ distribution folder. Access tokens are masked everywhere, including `-v` and `--
 mlrc install <version> [--loader fabric|quilt|forge|neoforge[:<version>]]
              [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
 mlrc install --list [--loader fabric|quilt|forge|neoforge]
+                    [--type release|snapshot|old_beta|old_alpha|april_fools] [--limit N]
 mlrc launch [<version>] [--instance <name>] [--lang <code>] [--memory <size>]
             [--jvm-arg <arg>] [--offline] [--username <n>]
             [--width N] [--height N] [--dry-run] [-- <game args>]

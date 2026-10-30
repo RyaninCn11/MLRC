@@ -47,14 +47,20 @@ mlrc launch 1.18.2
 mlrc use 1.18.2            # remember it for a bare `mlrc launch`
 ```
 
-Not sure which version to pick? `--list` prints them all, and with a loader only the
-ones that loader has a build for:
+Not sure which version to pick? `--list` prints them, newest first, and asks how many
+to show; with a loader, only the versions that loader has a build for:
 
 ```bash
-mlrc install --list                    # 921 versions, newest first
-mlrc install --list --loader fabric    # 507 of them
-mlrc install --list --loader neoforge  # 22 of them
+mlrc install --list                       # asks: show the first (10/921) - or `all`
+mlrc install --list --limit 0             # everything, no question
+mlrc install --list --type release        # releases only
+mlrc install --list --type april_fools    # the joke builds, 9 of them
+mlrc install --list --loader neoforge --type release
 ```
+
+Categories are `release`, `snapshot`, `old_beta`, `old_alpha` and `april_fools`; the
+last one is derived (a snapshot released on 1 April, plus the one that shipped on 31
+March), because Mojang's metadata has no marker for it.
 
 **Modded.** Loaders are installed by the same command, and the id it prints is what
 you launch:
@@ -123,7 +129,7 @@ mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 
 | Command | Purpose |
 |---|---|
-| `mlrc install <version>` | Install a version; `--list` lists what can be installed, `--loader fabric\|quilt\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
+| `mlrc install <version>` | Install a version; `--list` lists what can be installed (`--type`, `--limit`), `--loader fabric\|quilt\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
 | `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--memory 4G`, `--jvm-arg <arg>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |

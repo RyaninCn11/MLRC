@@ -23,7 +23,7 @@ use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
 use mlrc_core::loader::fabric::{self as fabric, Family};
 use mlrc_core::loader::forge::{self, Flavour};
-use mlrc_core::meta::manifest::VersionManifest;
+use mlrc_core::meta::manifest::{Channel, VersionManifest};
 use mlrc_core::meta::rule::Env;
 use mlrc_core::meta::version::Artifact;
 use mlrc_core::mods;
@@ -48,6 +48,8 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         Command::Install {
             version,
             list,
+            kind,
+            limit,
             dry_run,
             threads,
             java,
@@ -55,7 +57,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
             loader,
         } => {
             if *list {
-                install_list(cli, out, loader.as_deref()).await
+                install_list(cli, out, loader.as_deref(), kind.as_deref(), *limit).await
             } else {
                 cmd_install(
                     cli,
@@ -368,7 +370,7 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
     // `--all` is the same list `install --list` prints; one implementation, so the two
     // cannot drift apart.
     if all {
-        return install_list(cli, out, None).await;
+        return install_list(cli, out, None, None, None).await;
     }
 
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
@@ -442,12 +444,61 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
     Ok(())
 }
 
+/// A human at the keyboard, not a pipe and not a machine-readable run.
+fn interactive(cli: &Cli, out: &Out) -> bool {
+    use std::io::IsTerminal;
+    !out.is_json()
+        && !cli.quiet
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+}
+
+/// How many of `total` to print. Enter takes the offered ten, `all` takes everything,
+/// and a number is a number.
+fn ask_how_many(total: usize) -> MlrcResult<usize> {
+    let offered = 10.min(total);
+    print!("show the first ({offered}/{total}) - Enter for {offered}, a number, or `all`: ");
+    std::io::stdout().flush()?;
+
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|err| MlrcError::new(ErrorCode::Io, format!("cannot read stdin: {err}")))?;
+
+    parse_count(line.trim(), total)
+}
+
+fn parse_count(answer: &str, total: usize) -> MlrcResult<usize> {
+    let answer = answer.trim();
+    if answer.is_empty() {
+        return Ok(10.min(total));
+    }
+    if answer.eq_ignore_ascii_case("all") || answer == "*" {
+        return Ok(total);
+    }
+
+    match answer.parse::<usize>() {
+        Ok(0) => Ok(total),
+        Ok(count) => Ok(count.min(total)),
+        Err(_) => Err(MlrcError::new(
+            ErrorCode::Usage,
+            format!("expected a number or `all`, got {answer}"),
+        )),
+    }
+}
+
 /// `mlrc install --list`: what can be installed, optionally only what a loader has a
-/// build for.
+/// build for, optionally only one category.
 ///
 /// Mods are deliberately not part of this: there is no bounded list to show, and
 /// `mlrc mod search` is the question people actually have.
-async fn install_list(cli: &Cli, out: &Out, loader: Option<&str>) -> MlrcResult<()> {
+async fn install_list(
+    cli: &Cli,
+    out: &Out,
+    loader: Option<&str>,
+    kind: Option<&str>,
+    limit: Option<usize>,
+) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     root.ensure()?;
     let (client, source) = open_client(cli, &root).await?;
@@ -455,6 +506,17 @@ async fn install_list(cli: &Cli, out: &Out, loader: Option<&str>) -> MlrcResult<
     let manifest = VersionManifest::load(&client, &root).await?;
 
     let (loader_name, _) = parse_loader(loader)?;
+    let channel = match kind {
+        Some(text) => Some(Channel::parse(text).ok_or_else(|| {
+            let known: Vec<&str> = Channel::ALL.iter().map(|item| item.as_str()).collect();
+            MlrcError::new(
+                ErrorCode::Usage,
+                format!("unknown type {text} (expected {})", known.join(", ")),
+            )
+            .with("type", text.to_string())
+        })?),
+        None => None,
+    };
 
     let supported: Option<BTreeSet<String>> = match loader_name {
         None => None,
@@ -485,29 +547,56 @@ async fn install_list(cli: &Cli, out: &Out, loader: Option<&str>) -> MlrcResult<
             Some(ids) => ids.contains(&entry.id),
             None => true,
         })
+        .filter(|entry| match channel {
+            Some(wanted) => entry.channel() == wanted,
+            None => true,
+        })
         .collect();
 
-    match loader_name {
-        Some(name) => out.human(format!(
-            "{name}: {} of {} versions have a build; latest release {}, latest snapshot {}",
-            versions.len(),
-            manifest.versions.len(),
-            manifest.latest.release,
-            manifest.latest.snapshot
-        )),
-        None => out.human(format!(
+    let mut label: Vec<String> = Vec::new();
+    if let Some(name) = loader_name {
+        label.push(name.to_string());
+    }
+    if let Some(channel) = channel {
+        label.push(channel.as_str().to_string());
+    }
+
+    if label.is_empty() {
+        out.human(format!(
             "{} versions; latest release {}, latest snapshot {}",
             versions.len(),
             manifest.latest.release,
             manifest.latest.snapshot
-        )),
-    }
-    out.human(format!("{:<26}{:<10}{}", "ID", "TYPE", "RELEASED"));
-
-    for version in versions {
+        ));
+    } else {
         out.human(format!(
-            "{:<26}{:<10}{}",
-            version.id, version.kind, version.release_time
+            "{}: {} of {} versions; latest release {}, latest snapshot {}",
+            label.join(", "),
+            versions.len(),
+            manifest.versions.len(),
+            manifest.latest.release,
+            manifest.latest.snapshot
+        ));
+    }
+
+    // The whole point of the list is that it is long, so an interactive run shows a
+    // slice and asks; a pipe, `--json` and `--limit` are deterministic.
+    let total = versions.len();
+    let shown = match limit {
+        Some(0) => total,
+        Some(count) => count.min(total),
+        None if interactive(cli, out) => ask_how_many(total)?,
+        None => total,
+    };
+
+    out.human(format!("{:<26}{:<16}{}", "ID", "TYPE", "RELEASED"));
+
+    for version in versions.iter().take(shown) {
+        out.human(format!(
+            "{:<26}{:<16}{}",
+            version.id,
+            version.channel().as_str(),
+            version.release_time
         ));
 
         let mut event = json!({
@@ -515,12 +604,20 @@ async fn install_list(cli: &Cli, out: &Out, loader: Option<&str>) -> MlrcResult<
             "event": "version",
             "id": version.id,
             "type": version.kind,
+            "channel": version.channel().as_str(),
             "release_time": version.release_time,
         });
         if let Some(name) = loader_name {
             event["loader"] = json!(name);
         }
         out.json_event(event);
+    }
+
+    if shown < total {
+        out.human(format!(
+            "... {} more; `mlrc install --list --limit 0` prints every one",
+            total - shown
+        ));
     }
 
     Ok(())
@@ -2249,4 +2346,30 @@ fn dir_size(dir: &std::path::Path) -> u64 {
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_prompt_answers_mean_what_they_say() {
+        assert_eq!(parse_count("", 921).expect("enter"), 10);
+        assert_eq!(parse_count("  ", 921).expect("blank"), 10);
+        assert_eq!(parse_count("all", 921).expect("all"), 921);
+        assert_eq!(parse_count("*", 921).expect("star"), 921);
+        assert_eq!(parse_count("0", 921).expect("zero"), 921);
+        assert_eq!(parse_count("25", 921).expect("number"), 25);
+        // More than there are is not an error, it is everything.
+        assert_eq!(parse_count("5000", 921).expect("too many"), 921);
+        // A short list offers what it has, not ten.
+        assert_eq!(parse_count("", 3).expect("short list"), 3);
+    }
+
+    #[test]
+    fn a_bad_answer_is_a_usage_error() {
+        let error = parse_count("twenty", 921).expect_err("refused");
+        assert_eq!(error.code, ErrorCode::Usage);
+        assert!(error.message.contains("twenty"));
+    }
 }

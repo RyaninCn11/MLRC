@@ -60,6 +60,15 @@ pub enum Command {
         #[arg(long)]
         list: bool,
 
+        /// List one category: release, snapshot, old_beta, old_alpha or april_fools
+        #[arg(long = "type", value_name = "TYPE")]
+        kind: Option<String>,
+
+        /// Print at most N versions when listing (0 prints every one). An interactive
+        /// run asks instead, offering the first 10
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+
         /// What to do when the required Java runtime is missing
         #[arg(long, value_enum, default_value = "auto")]
         java: JavaMode,

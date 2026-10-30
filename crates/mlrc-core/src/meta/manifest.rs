@@ -72,6 +72,86 @@ impl VersionManifest {
     }
 }
 
+/// What a version is, for grouping and filtering.
+///
+/// The manifest only knows `release`, `snapshot`, `old_beta` and `old_alpha`. April
+/// Fools builds are snapshots that carry no marker of their own, so they get a
+/// category derived from the data: a snapshot released on 1 April, plus the few that
+/// shipped on 31 March (`1.RV-Pre1`) and are named here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    Release,
+    Snapshot,
+    OldBeta,
+    OldAlpha,
+    AprilFools,
+}
+
+/// Snapshots that are April Fools builds but not dated 1 April.
+const APRIL_FOOLS_IDS: [&str; 1] = ["1.RV-Pre1"];
+
+impl Channel {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "release" | "releases" | "stable" => Some(Self::Release),
+            "snapshot" | "snapshots" => Some(Self::Snapshot),
+            "old_beta" | "old-beta" | "beta" | "oldbeta" => Some(Self::OldBeta),
+            "old_alpha" | "old-alpha" | "alpha" | "oldalpha" => Some(Self::OldAlpha),
+            "april_fools" | "april-fools" | "aprilfools" | "fool" => Some(Self::AprilFools),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Snapshot => "snapshot",
+            Self::OldBeta => "old_beta",
+            Self::OldAlpha => "old_alpha",
+            Self::AprilFools => "april_fools",
+        }
+    }
+
+    /// Every category, in the order a listing should show them.
+    pub const ALL: [Self; 5] = [
+        Self::Release,
+        Self::Snapshot,
+        Self::OldBeta,
+        Self::OldAlpha,
+        Self::AprilFools,
+    ];
+}
+
+impl VersionEntry {
+    pub fn channel(&self) -> Channel {
+        if self.is_april_fools() {
+            return Channel::AprilFools;
+        }
+
+        match self.kind.as_str() {
+            "release" => Channel::Release,
+            "old_beta" => Channel::OldBeta,
+            "old_alpha" => Channel::OldAlpha,
+            _ => Channel::Snapshot,
+        }
+    }
+
+    fn is_april_fools(&self) -> bool {
+        if APRIL_FOOLS_IDS.contains(&self.id.as_str()) {
+            return true;
+        }
+        if self.kind != "snapshot" {
+            return false;
+        }
+        // `releaseTime` is RFC 3339; the day is everything before the `T`.
+        self.release_time
+            .split('T')
+            .next()
+            .map(|date| date.ends_with("-04-01"))
+            .unwrap_or(false)
+    }
+}
+
 fn read_cache(path: &Path) -> Option<VersionManifest> {
     let metadata = std::fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
