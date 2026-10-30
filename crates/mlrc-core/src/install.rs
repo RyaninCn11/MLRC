@@ -32,7 +32,7 @@ pub enum JavaMode {
     Skip,
 }
 
-/// How the caller wants Java handled. `allow_host` mirrors `customJava`.
+/// How the caller wants Java handled. `allow_host` mirrors `java.custom`.
 #[derive(Debug, Clone, Default)]
 pub struct JavaPolicy {
     pub mode: JavaMode,

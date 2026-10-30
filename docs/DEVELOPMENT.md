@@ -228,7 +228,7 @@ manifest, and the pack importer.
 
 | Change | Files |
 |---|---|
-| A config key | `port/config.rs`: `KEYS`, `get`, `set`, `canonical` (aliases), then the table in the design notes |
+| A config key | `port/config.rs`: `KEYS`, `get`, `set`, `canonical`, then the table in the design notes |
 | An error code | `error.rs`: enum, `as_str`, `exit_code`; the message shape is checked by `tests/error_style.rs` |
 | An event | `events.rs`, plus `mlrc-cli/src/progress.rs` and the NDJSON docs |
 | A CLI command | `mlrc-cli/src/cli.rs` and `commands.rs` |

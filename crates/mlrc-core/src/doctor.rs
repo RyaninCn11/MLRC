@@ -95,13 +95,13 @@ pub async fn run(root: &DataRoot, cfg: &Config, client: &HttpClient) -> Vec<Chec
         checks.push(Check {
             name: "host java",
             status: Status::Warn,
-            detail: format!("enabled (customJava=true), using {source}"),
+            detail: format!("enabled (java.custom=true), using {source}"),
         });
     } else {
         checks.push(Check {
             name: "host java",
             status: Status::Ok,
-            detail: "ignored (customJava=false), managed runtimes only".to_string(),
+            detail: "ignored (java.custom=false), managed runtimes only".to_string(),
         });
     }
 

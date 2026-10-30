@@ -2050,14 +2050,14 @@ fn list_java(out: &Out, root: &DataRoot) -> MlrcResult<()> {
     if cfg.java.custom {
         match discover::host(&cfg.java.path) {
             Some(host) => out.human(format!(
-                "host java: {} at {} (customJava=true)",
+                "host java: {} at {} (java.custom=true)",
                 host.major,
                 host.executable.display()
             )),
-            None => out.human("host java: customJava=true but no usable JDK was found"),
+            None => out.human("host java: java.custom=true but no usable JDK was found"),
         }
     } else {
-        out.human("host java: ignored (customJava=false)");
+        out.human("host java: ignored (java.custom=false)");
     }
 
     Ok(())

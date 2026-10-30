@@ -279,37 +279,55 @@ impl Config {
     }
 }
 
-/// Accepts both the canonical dotted key and the camelCase spelling users type.
+/// The one spelling a key has: `section.name`.
+///
+/// There are no aliases on purpose. Two spellings for one setting is how documentation
+/// drifts - `gameLanguage` in one paragraph, `general.game_language` in the next - and
+/// the second spelling always ends up either undocumented or wrong. Typing the old
+/// camelCase form now produces an error that names the right key.
 pub fn canonical(key: &str) -> MlrcResult<&'static str> {
-    Ok(match key.trim() {
-        "java.custom" | "customJava" | "customjava" => "java.custom",
-        "java.path" | "javaPath" | "javapath" => "java.path",
-        "java.xms" | "xms" => "java.xms",
-        "java.xmx" | "xmx" | "memory" => "java.xmx",
-        "general.default_version" | "defaultVersion" | "defaultversion" => {
-            "general.default_version"
-        }
-        "general.mirror" | "mirror" => "general.mirror",
-        "general.game_language" | "gameLanguage" | "gamelanguage" => "general.game_language",
-        "general.proxy" | "proxy" => "general.proxy",
-        "auth.server" | "authServer" | "yggdrasil" | "authserver" => "auth.server",
-        "auth.player_name" | "playerName" | "playername" | "username" => "auth.player_name",
-        "curseforge.api_key" | "curseforge.apiKey" | "curseforgeApiKey" | "curseforgeKey" => {
-            "curseforge.api_key"
-        }
-        other => return Err(unknown_key(other)),
+    let key = key.trim();
+    match KEYS.iter().find(|known| **known == key) {
+        Some(known) => Ok(known),
+        None => Err(unknown_key(key)),
+    }
+}
+
+/// Lowercase, letters and digits only: `gameLanguage`, `game_language` and
+/// `game-language` all squash to the same thing.
+fn squash(text: &str) -> String {
+    text.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+/// The key the user probably meant, so a habit is not just refused.
+fn suggest(key: &str) -> Option<&'static str> {
+    let needle = squash(key);
+    if needle.is_empty() {
+        return None;
+    }
+
+    KEYS.iter().copied().find(|known| {
+        squash(known) == needle
+            || known
+                .split('.')
+                .nth(1)
+                .map(|tail| squash(tail) == needle)
+                .unwrap_or(false)
     })
 }
 
 fn unknown_key(key: &str) -> MlrcError {
-    MlrcError::new(
-        ErrorCode::Config,
-        format!(
-            "unknown config key: {key} (known keys: {})",
-            KEYS.join(", ")
-        ),
-    )
-    .with("key", key.to_string())
+    let hint = match suggest(key) {
+        Some(known) => format!("did you mean {known}?"),
+        None => "run `mlrc config list` for the full list".to_string(),
+    };
+
+    MlrcError::new(ErrorCode::Config, format!("unknown config key {key}"))
+        .with("hint", hint)
+        .with("key", key.to_string())
 }
 
 fn parse_bool(key: &str, value: &str) -> MlrcResult<bool> {
@@ -320,5 +338,54 @@ fn parse_bool(key: &str, value: &str) -> MlrcResult<bool> {
             ErrorCode::Config,
             format!("invalid boolean for {key}: {other} (expected true or false)"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_key_round_trips() {
+        for key in KEYS {
+            assert!(canonical(key).is_ok(), "{key} must be accepted");
+        }
+    }
+
+    #[test]
+    fn keys_have_one_spelling() {
+        assert_eq!(
+            canonical("general.game_language").expect("dotted key"),
+            "general.game_language"
+        );
+        assert!(canonical("gameLanguage").is_err());
+        assert!(canonical("mirror").is_err());
+        assert!(canonical(" xmx ").is_err());
+    }
+
+    #[test]
+    fn a_habit_gets_a_suggestion() {
+        assert_eq!(suggest("gameLanguage"), Some("general.game_language"));
+        assert_eq!(suggest("Game_Language"), Some("general.game_language"));
+        assert_eq!(suggest("mirror"), Some("general.mirror"));
+        assert_eq!(suggest("xmx"), Some("java.xmx"));
+        assert_eq!(suggest("whatever"), None);
+    }
+
+    #[test]
+    fn setting_a_key_validates_before_writing() {
+        let mut config = Config::default();
+        config.set("auth.player_name", "Steve").expect("valid name");
+        assert_eq!(config.auth.player_name, "Steve");
+        assert!(config.set("auth.player_name", "bad name!").is_err());
+        assert_eq!(
+            config.auth.player_name, "Steve",
+            "a rejected value is not stored"
+        );
+
+        config
+            .set("general.mirror", "bmclapi")
+            .expect("valid mirror");
+        assert!(config.set("general.mirror", "fastest").is_err());
     }
 }

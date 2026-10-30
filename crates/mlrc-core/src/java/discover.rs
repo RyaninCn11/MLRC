@@ -73,7 +73,7 @@ pub fn managed(root: &DataRoot, major: u32) -> Option<JavaInstallation> {
     })
 }
 
-/// Host JDK, used only when `customJava=true`. `explicit` is `config.java.path`.
+/// Host JDK, used only when `java.custom = true`. `explicit` is `config.java.path`.
 pub fn host(explicit: &str) -> Option<JavaInstallation> {
     if !explicit.is_empty() {
         let executable = PathBuf::from(explicit);

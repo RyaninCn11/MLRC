@@ -90,7 +90,7 @@ mlrc mod install 238222 --source curseforge    # Just Enough Items
 **Identity.** Offline by default, under the name you pick:
 
 ```bash
-mlrc config set playerName Steve              # or `mlrc launch --username Steve`
+mlrc config set auth.player_name Steve        # or `mlrc launch --username Steve`
 ```
 
 Or sign in to a third-party Yggdrasil server, which adds skins and access to that
@@ -107,7 +107,7 @@ mlrc auth status
 mlrc launch --memory 6G
 mlrc config set java.xmx 6G
 mlrc launch --lang zh_cn
-mlrc config set gameLanguage zh_cn
+mlrc config set general.game_language zh_cn
 mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 ```
 ### Commands

@@ -91,10 +91,14 @@ Notes:
 `MLRC/config.toml`, every key in one place. `mlrc config get|set|list` reads and
 writes it; `set` validates before writing.
 
+A key is always `section.name` and never has a second spelling: `gameLanguage`, `xmx`
+and `mirror` were accepted once and are not any more, because two spellings for one
+setting is how a document drifts. Typing one now fails with the key that was meant.
+
 | Key | Values | Effect |
 |---|---|---|
 | `java.custom` | `false` (default), `true` | `true` allows a host JVM when no managed runtime matches |
-| `java.path` | path, empty | explicit binary; only with `custom = true` |
+| `java.path` | path, empty | explicit binary; only with `java.custom = true` |
 | `java.xms` | `512M`, `1G`, empty | initial heap; empty leaves the JVM default |
 | `java.xmx` | `2G` (default) | maximum heap; `--memory` and a fork's own value override it |
 | `general.default_version` | version id, empty | what `mlrc launch` starts |
