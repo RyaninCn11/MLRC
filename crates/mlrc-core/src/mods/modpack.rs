@@ -820,8 +820,14 @@ async fn ensure_version(
 
 /// Rejects absolute paths and `..`, so an archive cannot write outside the game dir.
 fn safe_relative(path: &str) -> Option<PathBuf> {
-    let candidate = PathBuf::from(path.replace('\\', "/"));
-    if candidate.is_absolute() {
+    let normalized = path.replace('\\', "/");
+    let candidate = PathBuf::from(&normalized);
+
+    // `is_absolute` only knows the current platform: on Unix `C:/x` is an ordinary
+    // relative path, so a pack authored on Windows would land in a directory named
+    // `C:` there. Reject the drive designator everywhere and a pack behaves the same
+    // on both.
+    if candidate.is_absolute() || starts_with_drive(&normalized) {
         return None;
     }
 
@@ -835,6 +841,11 @@ fn safe_relative(path: &str) -> Option<PathBuf> {
     }
 
     (!clean.as_os_str().is_empty()).then_some(clean)
+}
+
+fn starts_with_drive(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 fn sanitize(name: &str) -> String {
@@ -867,8 +878,12 @@ mod tests {
     fn traversal_is_rejected() {
         assert!(safe_relative("mods/../evil.jar").is_none());
         assert!(safe_relative("/etc/passwd").is_none());
-        assert!(safe_relative("C:/windows/system32").is_none());
         assert!(safe_relative("..\\evil").is_none());
+        // A drive designator is absolute on Windows and merely odd on Unix, so it is
+        // rejected on both: the same archive must behave the same everywhere.
+        assert!(safe_relative("C:/windows/system32").is_none());
+        assert!(safe_relative("C:\\windows\\system32").is_none());
+        assert!(safe_relative("c:relative-on-windows").is_none());
     }
 
     #[test]
