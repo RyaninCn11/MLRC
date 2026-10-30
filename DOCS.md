@@ -24,7 +24,7 @@ it records decisions and their reasoning, not schedules or progress.
 - Bundling or redistributing any Minecraft file. Everything is fetched on demand.
 - A GUI inside this repository. The engine is shaped so one can be added without
   touching it.
-- Mod management beyond running a version that already has a loader installed.
+- Publishing or hosting mods; MLRC only installs from Modrinth and CurseForge.
 - Skin services, realm browsing, chat, or anything else the game itself does.
 
 ---
@@ -676,7 +676,7 @@ The two sources differ in ways the launcher has to absorb:
 | Fixtures | real documents in the repository: 1.6.4 (legacy arguments), 1.12.2, 1.18.2 (extract rules), 1.21.x, 26.3 |
 | Integration | `crates/mlrc-core/tests/install_flow.rs`: a real HTTP server on 127.0.0.1, a seeded manifest cache, then a full install. Asserts the layout, the bytes on disk, `installed.json`, `objects.txt`; that a corrupted download fails with `E_NET_HASH` and leaves no complete state; that a second install restores a deleted file from the store; that a truncated response fails the run and the next one finishes the job; and that the event stream keeps the documented shape |
 | Style | `crates/mlrc-core/tests/error_style.rs` scans every `MlrcError::new` call and rejects a capital letter, a trailing period, an `error:` prefix, a newline, or an unbackticked `mlrc ...` command |
-| CI | `fmt`, `clippy -D warnings`, `test` on Windows and Linux, and an ASCII-only source check that enforces C1 |
+| CI | `fmt`, `clippy -D warnings` and `test` on Windows and Linux, an ASCII-only source check that enforces C1, and a release build on Windows, Linux and macOS whose binary is uploaded as a workflow artifact |
 
 The integration test never touches the internet: the engine reads its manifest cache
 before asking the network, so the fixture seeds it with URLs pointing at the local
@@ -716,7 +716,8 @@ is fetched - so the test looks for the phase rather than assuming position zero.
   entries.
 - **Explicit reference lists.** `objects.txt` per version decides what `cache prune`
   may delete; link counting is not portable enough to rely on.
-- **A shared game directory.** `data/minecraft/` for every version; separate instance
-  directories would be an additive change, not a redesign.
+- **The version directory is the game directory.** Isolation by construction: a fork is
+  the answer to "another world set for the same version", because that is a new version
+  id, not a second directory attached to an existing one.
 - **Offline mode is first-class.** It makes the launcher testable without an account,
   and it is the only way to play on a LAN without Mojang's services.

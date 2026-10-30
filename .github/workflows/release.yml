@@ -39,27 +39,48 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # LICENSE travels with the binary: it is an Apache-2.0 redistribution.
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $name = "mlrc-${{ github.ref_name }}-${{ matrix.target }}"
+          $version = "${{ github.ref_name }}"
+          if (-not $version.StartsWith("v")) { $version = "dev" }
+          $name = "mlrc-$version-${{ matrix.target }}"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           New-Item -ItemType Directory -Path $name | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/mlrc.exe" $name
-          Copy-Item README.md $name
+          Copy-Item LICENSE, README.md $name
           Compress-Archive -Path $name -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$name.zip.sha256" -Value "$hash  $name.zip"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          name="mlrc-${{ github.ref_name }}-${{ matrix.target }}"
+          version="${{ github.ref_name }}"
+          case "$version" in v*) ;; *) version="dev" ;; esac
+          name="mlrc-$version-${{ matrix.target }}"
           mkdir -p dist "$name"
           cp "target/${{ matrix.target }}/release/mlrc" "$name"
-          cp README.md "$name"
+          cp LICENSE README.md "$name"
           tar -czf "dist/$name.tar.gz" "$name"
+          if command -v sha256sum >/dev/null; then
+            (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          else
+            (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          fi
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "target/${{ matrix.target }}/release/mlrc.exe" --version
+          else
+            "target/${{ matrix.target }}/release/mlrc" --version
+          fi
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
