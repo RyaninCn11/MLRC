@@ -300,11 +300,7 @@ fn versions(root: &DataRoot) -> (Vec<String>, Vec<String>) {
     let mut incomplete = Vec::new();
 
     for id in list_dirs(&root.versions_dir()) {
-        let path = root
-            .versions_dir()
-            .join(&id)
-            .join(InstalledState::FILE_NAME);
-        match InstalledState::read(&path) {
+        match InstalledState::load(root, &id) {
             Ok(Some(state)) if state.complete => complete.push(id),
             _ => incomplete.push(id),
         }

@@ -1,4 +1,8 @@
 /target
+
+# Running the launcher from the checkout creates its two folders here.
+/.minecraft
+/MLRC
 /data
 
 # Loader installers and the game write logs next to whatever they were started from.

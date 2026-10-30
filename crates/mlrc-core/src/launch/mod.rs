@@ -69,7 +69,7 @@ pub fn build(
     options: &LaunchOptions,
 ) -> MlrcResult<LaunchPlan> {
     let version_dir = root.version_dir(&version.id);
-    let natives_dir = version_dir.join("natives");
+    let natives_dir = natives::prepare(root, &version.id)?;
     let game_dir = game_dir.to_path_buf();
     std::fs::create_dir_all(&game_dir)?;
 
@@ -80,7 +80,7 @@ pub fn build(
     }
     let env = Env::detect().with_features(&features);
 
-    let classpath = classpath(version, plan, &version_dir);
+    let classpath = classpath(version, plan, &version_dir, &root.libraries_dir());
 
     let mut vars = Variables::new();
     vars.set("auth_player_name", identity.name.clone());
@@ -104,13 +104,16 @@ pub fn build(
             .or_else(|| version.assets.clone())
             .unwrap_or_else(|| "legacy".to_string()),
     );
-    vars.set("natives_directory", natives_dir.display().to_string());
+    vars.set(
+        "natives_directory",
+        natives_dir.join("java").display().to_string(),
+    );
     vars.set("classpath", classpath.clone());
     // Used by Forge/NeoForge to build their module path; without them the literal
     // `${library_directory}` reaches the JVM and the bootstrap cannot find its modules.
     vars.set(
         "library_directory",
-        version_dir.join("libraries").display().to_string(),
+        root.libraries_dir().display().to_string(),
     );
     vars.set("classpath_separator", PATH_SEPARATOR);
     vars.set("launcher_name", "mlrc");
@@ -144,7 +147,10 @@ pub fn build(
     }
     if version_jvm.is_empty() {
         // Pre-1.13 documents have no jvm arguments at all; build the classic pair.
-        version_jvm.push(format!("-Djava.library.path={}", natives_dir.display()));
+        version_jvm.push(format!(
+            "-Djava.library.path={}",
+            natives_dir.join("java").display()
+        ));
         version_jvm.push("-cp".to_string());
         version_jvm.push(classpath);
     }
@@ -178,6 +184,25 @@ pub fn build(
         .any(|argument| argument.starts_with("-Djava.io.tmpdir"))
     {
         jvm.insert(0, format!("-Djava.io.tmpdir={}", tmp_dir.display()));
+    }
+
+    // Each native family gets its own area, so one library cannot clobber another's
+    // extracted files. Mojang's documents point all of them at `natives_directory`;
+    // the launcher we imitate splits them, and so do we - an existing flag is
+    // rewritten rather than left alone.
+    for (property, area) in [
+        ("-Djna.tmpdir=", "jna"),
+        ("-Dorg.lwjgl.system.SharedLibraryExtractPath=", "lwjgl"),
+        ("-Dio.netty.native.workdir=", "netty"),
+    ] {
+        let value = format!("{property}{}", natives_dir.join(area).display());
+        match jvm
+            .iter_mut()
+            .find(|argument| argument.starts_with(property))
+        {
+            Some(existing) => *existing = value,
+            None => jvm.insert(0, value),
+        }
     }
 
     // The game talks to Mojang as well; give it the same proxy the launcher uses,
@@ -245,7 +270,12 @@ fn game_arguments(
     args
 }
 
-fn classpath(version: &VersionJson, plan: &InstallPlan, version_dir: &Path) -> String {
+fn classpath(
+    version: &VersionJson,
+    plan: &InstallPlan,
+    version_dir: &Path,
+    libraries: &Path,
+) -> String {
     let mut entries: Vec<String> = Vec::with_capacity(plan.libraries.len() + 1);
     entries.push(
         version_dir
@@ -253,14 +283,10 @@ fn classpath(version: &VersionJson, plan: &InstallPlan, version_dir: &Path) -> S
             .display()
             .to_string(),
     );
+    // One shared Maven tree for every version, exactly where the official launcher
+    // keeps it; the content store makes the duplication free.
     for library in &plan.libraries {
-        entries.push(
-            version_dir
-                .join("libraries")
-                .join(&library.path)
-                .display()
-                .to_string(),
-        );
+        entries.push(libraries.join(&library.path).display().to_string());
     }
     entries.join(PATH_SEPARATOR)
 }

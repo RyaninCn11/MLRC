@@ -15,6 +15,13 @@ use crate::error::{ErrorCode, MlrcError, MlrcResult};
 pub const OBJECTS_FILE: &str = "objects.txt";
 
 pub fn write_objects(dir: &Path, objects: &BTreeSet<String>) -> MlrcResult<()> {
+    std::fs::create_dir_all(dir).map_err(|err| {
+        MlrcError::new(
+            ErrorCode::Io,
+            format!("cannot create {}: {err}", dir.display()),
+        )
+    })?;
+
     let mut text = String::with_capacity(objects.len() * 41);
     for sha1 in objects {
         text.push_str(sha1);
@@ -62,6 +69,21 @@ pub struct InstalledState {
 
 impl InstalledState {
     pub const FILE_NAME: &'static str = "installed.json";
+
+    /// `<versions>/<id>/MLRC/installed.json`: launcher state lives beside the
+    /// version, not in the standard directory where other tools look.
+    pub fn path(root: &crate::port::DataRoot, id: &str) -> std::path::PathBuf {
+        root.state_dir(id).join(Self::FILE_NAME)
+    }
+
+    pub fn load(root: &crate::port::DataRoot, id: &str) -> MlrcResult<Option<Self>> {
+        Self::read(&Self::path(root, id))
+    }
+
+    /// Writes the state into the version's launcher directory.
+    pub fn save(&self, root: &crate::port::DataRoot, id: &str) -> MlrcResult<()> {
+        self.write(&Self::path(root, id))
+    }
 
     pub fn read(path: &Path) -> MlrcResult<Option<Self>> {
         match std::fs::read_to_string(path) {

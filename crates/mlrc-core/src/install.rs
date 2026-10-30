@@ -196,15 +196,13 @@ async fn install_prepared(
         add(
             &mut files,
             library,
-            version_dir.join("libraries").join(&library.path),
+            root.libraries_dir().join(&library.path),
         );
     }
     for native in &plan.natives {
-        add(
-            &mut files,
-            native,
-            version_dir.join("natives").join(native.file_name()),
-        );
+        let dir = crate::launch::natives::natives_root(root, id)
+            .join(crate::launch::natives::category(native));
+        add(&mut files, native, dir.join(native.file_name()));
     }
     if let Some(logging) = &plan.logging {
         add(
@@ -284,8 +282,8 @@ async fn install_prepared(
         bytes: summary.bytes,
         installed_at: now(),
     };
-    state::write_objects(&version_dir, &referenced)?;
-    state.write(&version_dir.join(InstalledState::FILE_NAME))?;
+    state::write_objects(&root.state_dir(id), &referenced)?;
+    state.write(&InstalledState::path(root, id))?;
 
     sink.emit(Event::Done {
         message: format!(
@@ -503,10 +501,9 @@ pub async fn install_installer(
     root.ensure()?;
 
     // The installer needs the vanilla client to patch.
-    let parent_complete =
-        InstalledState::read(&root.version_dir(mc).join(InstalledState::FILE_NAME))?
-            .map(|state| state.complete)
-            .unwrap_or(false);
+    let parent_complete = InstalledState::load(root, mc)?
+        .map(|state| state.complete)
+        .unwrap_or(false);
     if !parent_complete {
         install(client, root, mc, options, sink).await?;
     }
@@ -677,14 +674,12 @@ pub async fn install_installer(
     VersionJson::store_cached(root, &installer.id, &produced_bytes)?;
 
     let version_dir = root.version_dir(&installer.id);
-    copy_tree(&stage.join("libraries"), &version_dir.join("libraries"))?;
-
-    // The installer only fetches what its processors need. The rest of the vanilla
-    // libraries already exist in the parent version directory, so link them in
-    // rather than downloading a second copy.
+    // Libraries are shared across versions now, so the installer's output merges into
+    // the one Maven tree instead of a private copy per version.
+    copy_tree(&stage.join("libraries"), &root.libraries_dir())?;
     link_tree(
         &root.version_dir(mc).join("libraries"),
-        &version_dir.join("libraries"),
+        &root.libraries_dir(),
     )?;
 
     let staged_client = stage.join("versions").join(mc).join(format!("{mc}.jar"));
@@ -711,10 +706,10 @@ pub async fn install_installer(
         bytes: size,
         installed_at: now(),
     };
-    state.write(&version_dir.join(InstalledState::FILE_NAME))?;
+    state.write(&InstalledState::path(root, &installer.id))?;
     // Nothing here came through the content-addressed store, but the empty list
     // keeps `cache prune` from refusing to run.
-    state::write_objects(&version_dir, &BTreeSet::new())?;
+    state::write_objects(&root.state_dir(&installer.id), &BTreeSet::new())?;
 
     sink.emit(Event::Done {
         message: format!("installed {}", installer.id),

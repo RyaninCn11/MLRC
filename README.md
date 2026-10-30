@@ -20,7 +20,7 @@ a graphical interface can reuse the same engine without touching it.
 - [x] Machine-readable output: stable exit codes, error codes, NDJSON events
 - [x] Install health checks (`mlrc doctor`)
 - [x] Fabric, Quilt, Forge and NeoForge loaders: `mlrc install <mc> --loader fabric|quilt|forge|neoforge`
-- [x] Named instances, each with its own game directory
+- [x] Forks: a version that inherits another and keeps its own worlds and mods
 - [x] Set the in-game language before launch (`--lang zh_cn`)
 - [x] Mods from Modrinth: search, install with dependencies, update, remove, enable/disable
 - [x] Import Modrinth modpacks (`.mrpack`) as an instance
@@ -67,8 +67,8 @@ mlrc --mirror bmclapi install 1.12.2
 
 `--mirror auto` (the default) times both sources once and remembers the faster one.
 
-Modded, or want separate worlds? Every version shares one game directory by default;
-an instance gives you its own:
+Modded, or want separate worlds? Every version already has its own folder, so a fork
+is how you get a second world set for the same Minecraft version:
 
 ```bash
 mlrc install 1.21.1 --loader fabric
@@ -153,7 +153,7 @@ Global flags: `--data-dir`, `--json`, `--quiet`, `-v`, `--mirror`.
 
 ### Configuration
 
-`data/config.toml`:
+`MLRC/config.toml`:
 
 ```toml
 [java]
@@ -175,13 +175,13 @@ emits NDJSON events carrying the same error codes.
 
 ## How it works
 
-- **Portable by default.** Data lives in `data/` next to the executable. If that
+- **Portable by default.** Everything lives next to the executable: `.minecraft` for the standard layout, `MLRC` for the launcher's own data. If the
   folder is not writable the launcher fails with `E_PORTABLE_READONLY` instead of
   relocating into the user profile.
 - **Hashes are the authority.** Every file is checked against the SHA1 from Mojang's
   metadata. A mirror is only a URL substitution; a file it does not carry falls back
   to the official URL.
-- **Java is pinned per version.** Runtimes are stored under `data/java/jdk-<major>/`
+- **Java is pinned per version.** Runtimes are stored under `MLRC/java/jdk-<major>/`
   and the host JDK is ignored unless `customJava=true`, so a system JDK upgrade cannot
   break an installed version.
 - **One engine, two front-ends.** `mlrc-core` never prints and emits events; the CLI

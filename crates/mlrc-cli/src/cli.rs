@@ -12,7 +12,8 @@ use clap::{Parser, Subcommand, ValueEnum};
     disable_help_subcommand = true
 )]
 pub struct Cli {
-    /// Data directory. Defaults to <directory of the executable>/data (portable).
+    /// Base directory holding .minecraft and MLRC. Defaults to the executable's
+    /// directory (portable).
     #[arg(long, global = true, value_name = "PATH")]
     pub data_dir: Option<PathBuf>,
 

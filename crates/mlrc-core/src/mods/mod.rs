@@ -39,35 +39,43 @@ pub fn loader_of(id: &str) -> Option<&'static str> {
 
 /// Game version plus loader for an installed version.
 ///
-/// The Minecraft version comes from `inheritsFrom`, not from the id: `neoforge-21.1.265`
-/// does not contain it, and `1.21.1-forge-52.1.20` would need parsing.
+/// Follows `inheritsFrom` rather than parsing the id: a fork's id says nothing about
+/// its loader, and `neoforge-21.1.265` does not contain the Minecraft version at all.
 pub fn platform(root: &DataRoot, id: &str) -> MlrcResult<Platform> {
-    let loader = loader_of(id).ok_or_else(|| {
-        MlrcError::new(
-            ErrorCode::Usage,
-            format!(
-                "{id} is a vanilla version; mods need a loader (install with --loader fabric|forge|neoforge)"
-            ),
-        )
-        .with("version", id.to_string())
-    })?;
+    let mut current = id.to_string();
 
-    let document = VersionJson::read_cached(root, id)?.ok_or_else(|| {
-        MlrcError::new(
-            ErrorCode::VersionUnknown,
-            format!("metadata for {id} is missing; reinstall it"),
-        )
-    })?;
+    for _ in 0..8 {
+        let document = VersionJson::read_cached(root, &current)?.ok_or_else(|| {
+            MlrcError::new(
+                ErrorCode::VersionUnknown,
+                format!("metadata for {current} is missing; reinstall it"),
+            )
+        })?;
 
-    let mc = document
-        .inherits_from
-        .clone()
-        .unwrap_or_else(|| id.to_string());
+        if let Some(loader) = loader_of(&current) {
+            let mc = document
+                .inherits_from
+                .clone()
+                .unwrap_or_else(|| current.clone());
+            return Ok(Platform {
+                mc,
+                loader: loader.to_string(),
+            });
+        }
 
-    Ok(Platform {
-        mc,
-        loader: loader.to_string(),
-    })
+        match document.inherits_from.clone() {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+
+    Err(MlrcError::new(
+        ErrorCode::Usage,
+        format!(
+            "{id} is a vanilla version; mods need a loader (install with --loader fabric|quilt|forge|neoforge)"
+        ),
+    )
+    .with("version", id.to_string()))
 }
 
 pub fn mods_dir(game_dir: &Path) -> PathBuf {

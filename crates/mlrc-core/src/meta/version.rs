@@ -265,11 +265,12 @@ pub struct LoggingClient {
 }
 
 impl VersionJson {
+    /// `<.minecraft>/versions/<id>/<id>.json`, the standard location.
+    ///
+    /// Other launchers and the loader installers look here, and it keeps a version
+    /// self-contained: deleting the directory removes the document with it.
     pub fn cache_path(root: &DataRoot, id: &str) -> PathBuf {
-        root.meta_dir()
-            .join("versions")
-            .join(id)
-            .join(format!("{id}.json"))
+        root.version_dir(id).join(format!("{id}.json"))
     }
 
     /// Reads the copy written by a previous install, without touching the network.

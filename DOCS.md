@@ -133,54 +133,59 @@ dialog, and `--json` renders a line plus exit code 5. The engine never reads std
 
 ## 5. On-disk layout
 
-Data root resolution order:
+Base directory resolution order:
 
 1. `--data-dir <path>`
 2. `MLRC_DATA_DIR`
-3. `<directory of mlrc>/data`
+3. the directory containing the executable
 
-The executable directory is resolved with `current_exe()` and `canonicalize`. If it is
-not writable, the launcher fails with `E_PORTABLE_READONLY`; it never falls back to a
-per-user directory behind the user's back.
+The base contains two folders, split by who reads them. `.minecraft` is the standard
+launcher directory, so other tools and the game itself recognise it; `MLRC` is
+launcher-private and safe to delete when the cache is worthless.
+
+The executable directory is resolved with `current_exe()`. If it is not writable, the
+launcher fails with `E_PORTABLE_READONLY`; it never falls back to a per-user directory
+behind the user's back.
 
 ```
 <dist>/
 |-- mlrc.exe
-`-- data/
+|-- .minecraft/
+|   |-- launcher_profiles.json          minimal stub; loader installers require it
+|   |-- assets/
+|   |   |-- indexes/<id>.json
+|   |   `-- objects/<aa>/<full sha1>
+|   |-- libraries/<maven path>          one tree, shared by every version
+|   `-- versions/<id>/
+|       |-- <id>.json                   version document, standard location
+|       |-- <id>.jar                    client jar; a fork hardlinks its parent's
+|       |-- <id>-natives/{java,jna,lwjgl,netty}
+|       |-- MLRC/                       launcher-private, per version
+|       |   |-- installed.json          install state
+|       |   |-- objects.txt             hashes this version references
+|       |   `-- instance.json           only for forks
+|       |-- saves/  mods/  resourcepacks/  shaderpacks/  config/  logs/
+|       `-- options.txt  servers.dat    the game directory is this same folder
+`-- MLRC/
     |-- config.toml
-    |-- meta/
-    |   |-- version_manifest_v2.json
-    |   |-- java-runtime-index.json
-    |   `-- versions/<id>/<id>.json
-    |-- cache/objects/<aa>/<full sha1>     one copy of every file
-    |-- assets/
-    |   |-- indexes/<id>.json
-    |   `-- objects/<aa>/<full sha1>
-    |-- java/jdk-<major>/                  managed runtimes, keyed by major
-    |-- versions/<id>/
-    |   |-- <id>.jar
-    |   |-- <id>.json
-    |   |-- libraries/                     hardlinks into cache/objects
-    |   |-- natives/
-    |   |-- logging/
-    |   |-- objects.txt                    hashes this version references
-    |   `-- installed.json                 install state
-    |-- minecraft/                         shared game directory
-    |-- instances/<name>/
-    |   |-- instance.toml                  name and version
-    |   `-- minecraft/                     that instance's game directory
-    `-- logs/
+    |-- cache/objects/<aa>/<full sha1>  one copy of every file, hardlinked into place
+    |-- java/jdk-<major>/               managed runtimes, keyed by major
+    |-- meta/                           manifest and runtime index caches
+    |-- logs/                           installer output and the launcher's own log
+    `-- tmp/                            `-Djava.io.tmpdir` for the game
 ```
 
 Notes:
 
-- `cache/objects` and `versions/<id>` should share a volume for hardlinks; otherwise
+- The version directory doubles as its game directory: isolation by construction, and
+  deleting a version deletes exactly what belonged to it.
+- `MLRC/cache/objects` and `.minecraft` must share a volume for hardlinks; otherwise
   the store copies and reports a warning.
-- `versions/` holds the immutable, shareable part; a game directory holds the mutable
-  part (saves, options, resource packs, mods).
-- A launch without `--instance` uses `data/minecraft/`; with `--instance <name>` it
-  uses `data/instances/<name>/minecraft/` and the version recorded in that instance.
-- Nothing is written outside `data/`.
+- `cache prune` trusts `versions/*/MLRC/objects.txt`, so the state file lives with the
+  version instead of in a central directory.
+- A fork is a version directory holding a two-line document (`inheritsFrom`), a
+  hardlinked jar and `MLRC/instance.json`; nothing is copied from the parent.
+- Nothing is written outside the base directory.
 
 ---
 
@@ -226,7 +231,7 @@ Exit code 5 is a request for a decision, not a failure: the NDJSON line carries
 
 ### 6.3 State, removal, cache
 
-`versions/<id>/installed.json` records completeness, the Java component and major, and
+`versions/<id>/MLRC/installed.json` records completeness, the Java component and major, and
 the file count and size. A version with `complete: false` is repaired by re-running
 install and refused by launch.
 
@@ -286,7 +291,7 @@ rather than mysterious.
 are rejected with `E_JAVA_META_MISSING` rather than guessed at; the block is present in
 almost the whole back catalogue, missing only in a few very old versions.
 
-Runtime on disk: `data/java/jdk-<major>/`, keyed by major rather than by Mojang's
+Runtime on disk: `MLRC/java/jdk-<major>/`, keyed by major rather than by Mojang's
 component name, because two components can share a major (`java-runtime-gamma` and
 `java-runtime-gamma-snapshot` are both 17). Provenance is recorded in
 `jdk-<major>/mlrc.json`.
@@ -329,7 +334,7 @@ bits are applied on Unix.
   whatever `default-user-jvm` carried: a modded pack that keeps the 2G default dies
   with an out-of-memory error instead of anything a user can act on.
 - `--jvm-arg` appends a flag verbatim, for the `-XX:` tuning that no config key covers.
-- `-Djava.io.tmpdir` points at `data/tmp`: loader remapping and image caches then stay
+- `-Djava.io.tmpdir` points at `MLRC/tmp`: loader remapping and image caches then stay
   inside the portable tree instead of the system temp directory.
 - Variables are `${name}` placeholders; unknown ones are left visible rather than
   silently emptied. `library_directory` and `classpath_separator` are provided because
@@ -343,10 +348,23 @@ the launcher before rule evaluation, never inferred from the version.
 
 ### 8.2 Natives
 
-When the plan contains native jars, `.dll`/`.so`/`.dylib`/`.jnilib` entries are
-extracted flat into `versions/<id>/natives/`, skipping `META-INF/`. When it does not,
-the directory is simply empty. Modern versions rely on LWJGL extracting its own
-libraries from the classpath.
+Old versions ship native jars the launcher must unpack; since 1.19 they ride on the
+classpath and LWJGL unpacks what it needs itself, so an empty set is normal.
+
+The layout follows the launcher we imitate: one root per version with four areas, each
+native family in its own so two libraries cannot clobber each other's files.
+
+```
+versions/<id>/<id>-natives/
+|-- java/     launcher-extracted natives; `-Djava.library.path` points here
+|-- jna/      `-Djna.tmpdir`
+|-- lwjgl/    `-Dorg.lwjgl.system.SharedLibraryExtractPath`
+`-- netty/    `-Dio.netty.native.workdir`
+```
+
+Mojang's documents point all four properties at one directory; the launcher rewrites
+the three that name a family so each has its own, which is what the launcher this
+project imitates does.
 
 ### 8.3 Process
 
@@ -361,22 +379,28 @@ Offline identity derives the UUID as MD5 of `OfflinePlayer:<name>` with the RFC 
 version-3 and variant bits applied. The access token is a placeholder; online-mode
 servers reject it, which is the point. `--uuid` is passed without dashes.
 
-### 8.5 Game directory and instances
+### 8.5 Game directory and forks
 
 The game directory is the mutable part of a setup: saves, options, resource packs and
-mods. By default it is `data/minecraft/` and every version shares it.
+mods. Here it is the version's own directory, `versions/<id>/`, which is the isolation
+model of the launcher this project imitates: one version, one set of worlds.
 
-An instance is a named game directory bound to one version:
+A second set of worlds for the same Minecraft version is a **fork**, a version that
+inherits another one:
 
 ```
 mlrc instance create survival --version 1.21.1
 mlrc launch --instance survival
 ```
 
-Creating one copies nothing. The version store, libraries and assets stay shared, so
-ten instances cost ten game directories rather than ten installations; only
-`data/instances/<name>/minecraft/` and a one-line `instance.toml` are new. Removing an
-instance deletes that directory and leaves every version installed.
+Creating one copies nothing. The fork is a two-line version document with
+`inheritsFrom`, a client jar hardlinked from its parent, and `MLRC/instance.json`; the
+library tree, assets and the parent's files stay shared. Removing a fork deletes its
+directory and nothing else.
+
+Because a fork is a real version id, `mlrc list` shows it, `mlrc uninstall` removes it,
+and every version-facing command (`mod`, `launch <id>`) accepts it without knowing what
+a fork is.
 
 ### 8.6 Game language
 
@@ -452,7 +476,7 @@ directory (`launcher_profiles.json`, `versions/<mc>/<mc>.{json,jar}`), runs the
 official installer with `--installClient`, and adopts the result: the produced version
 document goes into the metadata cache, the installer's libraries are copied, and the
 vanilla libraries are hardlinked in from the parent version instead of being stored
-twice. The installer's own output is kept at `data/logs/installer-<id>.log`, because
+twice. The installer's own output is kept at `MLRC/logs/installer-<id>.log`, because
 it is the only explanation when one fails.
 
 Three details make that workable rather than merely possible:
@@ -673,7 +697,7 @@ is fetched - so the test looks for the phase rather than assuming position zero.
 | A shared public client id is revoked | configurable client id; a self-registered Azure application is documented |
 | Mojang changes the metadata shape | every field defaulted, unknown fields ignored, `doctor` reports unhealthy pieces |
 | A mirror is stale or incomplete | official hash authoritative, per-file fallback to the origin |
-| A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer's libraries are pre-downloaded through the configured source, the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `data/logs/installer-<id>.log` |
+| A loader installer cannot reach its maven | loader metadata is fetched with a 10 second timeout and falls back to BMCLAPI; the installer's libraries are pre-downloaded through the configured source, the installer is handed `--mirror` when BMCLAPI is in use, and its full output is kept in `MLRC/logs/installer-<id>.log` |
 | A machine needs a proxy | child JVMs (installers and the game) get `-Dhttp(s).proxy*` from `general.proxy`; `none` bypasses a broken proxy without touching the environment |
 | Modrinth is unreachable or changes its shape | failures surface as `E_NET_HTTP` / `E_META_SHAPE` with the URL; nothing is written into `mods/` unless the SHA1 matches |
 | The portable directory is read-only | fail with `E_PORTABLE_READONLY`, never relocate silently |
@@ -686,7 +710,7 @@ is fetched - so the test looks for the phase rather than assuming position zero.
 ## 13. Design decisions
 
 - **Per-version install, no batch mode.** The unit of work mirrors `nvm install`.
-- **Managed Java, keyed by major.** `data/java/jdk-<major>`, host JDK ignored by
+- **Managed Java, keyed by major.** `MLRC/java/jdk-<major>`, host JDK ignored by
   default.
 - **Content-addressed cache with hardlinks.** One copy of a jar, many directory
   entries.

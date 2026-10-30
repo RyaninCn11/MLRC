@@ -220,8 +220,8 @@ async fn install_writes_every_file_and_the_state() {
         "client jar must be the bytes the server sent"
     );
     assert!(
-        version_dir
-            .join("libraries/org/example/fake-lib/1.0/fake-lib-1.0.jar")
+        root.libraries_dir()
+            .join("org/example/fake-lib/1.0/fake-lib-1.0.jar")
             .is_file(),
         "library"
     );
@@ -230,14 +230,15 @@ async fn install_writes_every_file_and_the_state() {
         "asset index"
     );
 
-    let state = InstalledState::read(&version_dir.join(InstalledState::FILE_NAME))
+    let state = InstalledState::load(&root, "1.21.1")
         .expect("read state")
         .expect("state present");
     assert!(state.complete);
     assert_eq!(state.id, "1.21.1");
 
     // objects.txt is what `cache prune` trusts, so it must list what was pulled.
-    let objects = std::fs::read_to_string(version_dir.join("objects.txt")).expect("objects.txt");
+    let objects =
+        std::fs::read_to_string(root.state_dir("1.21.1").join("objects.txt")).expect("objects.txt");
     assert!(objects.contains(&sha1(CLIENT_JAR)));
 
     let _ = std::fs::remove_dir_all(dir);
@@ -268,10 +269,7 @@ async fn a_corrupted_download_fails_with_the_hash_code() {
 
     assert_eq!(error.code, ErrorCode::HashMismatch, "{error:?}");
     assert!(
-        !root
-            .version_dir("1.21.1")
-            .join(InstalledState::FILE_NAME)
-            .is_file(),
+        !InstalledState::path(&root, "1.21.1").is_file(),
         "a failed install must not claim to be complete"
     );
 
@@ -301,8 +299,8 @@ async fn a_second_install_reuses_the_store() {
         .expect("first install");
 
     let library = root
-        .version_dir("1.21.1")
-        .join("libraries/org/example/fake-lib/1.0/fake-lib-1.0.jar");
+        .libraries_dir()
+        .join("org/example/fake-lib/1.0/fake-lib-1.0.jar");
     let first = std::fs::metadata(&library).unwrap().modified().unwrap();
 
     // Delete the file but keep the store: the install must materialize it again

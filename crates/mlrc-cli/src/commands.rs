@@ -190,9 +190,8 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
 fn cmd_use(cli: &Cli, out: &Out, version: &str) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     root.ensure()?;
-    let state_path = root.version_dir(version).join(InstalledState::FILE_NAME);
 
-    match InstalledState::read(&state_path)? {
+    match InstalledState::load(&root, version)? {
         Some(state) if state.complete => {
             let mut cfg = Config::load(&root.config_path())?;
             cfg.general.default_version = version.to_string();
@@ -255,7 +254,7 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
                 continue;
             }
             let id = entry.file_name().to_string_lossy().to_string();
-            let state = InstalledState::read(&entry.path().join(InstalledState::FILE_NAME))?;
+            let state = InstalledState::load(&root, &id)?;
             rows.push((id, state));
         }
     }
@@ -697,7 +696,8 @@ async fn cmd_launch(
     let id = match version {
         Some(id) => id.to_string(),
         None => match &instance {
-            Some(instance) => instance.version.clone(),
+            // A fork is itself a version id; its document carries the inheritance.
+            Some(instance) => instance.name.clone(),
             None if !cfg.general.default_version.is_empty() => cfg.general.default_version.clone(),
             None => {
                 return Err(MlrcError::new(
@@ -708,9 +708,11 @@ async fn cmd_launch(
         },
     };
 
+    // Every version runs in its own directory, which is also where its saves and mods
+    // live; `--instance` is just shorthand for naming that version.
     let game_dir = match &instance {
         Some(instance) => Instance::game_dir(&root, &instance.name),
-        None => root.minecraft_dir(),
+        None => root.game_dir(&id),
     };
 
     // Heap precedence: flag, then the instance's own value, then the config.
@@ -736,7 +738,7 @@ async fn cmd_launch(
         launch::options::validate_language(code)?;
     }
 
-    match InstalledState::read(&root.version_dir(&id).join(InstalledState::FILE_NAME))? {
+    match InstalledState::load(&root, &id)? {
         Some(state) if state.complete => {}
         Some(_) => {
             return Err(MlrcError::new(
@@ -784,7 +786,7 @@ async fn cmd_launch(
         })?;
 
     let plan = install::build(&document, &Env::detect())?;
-    launch::natives::extract(&plan, &root.version_dir(&id))?;
+    launch::natives::extract(&plan, &root, &id)?;
 
     let identity = auth::offline(username.unwrap_or("Player"));
     let options = LaunchOptions {
@@ -862,7 +864,7 @@ fn cmd_uninstall(cli: &Cli, out: &Out, version: &str) -> MlrcResult<()> {
     root.ensure()?;
 
     let dir = root.version_dir(version);
-    let state = InstalledState::read(&dir.join(InstalledState::FILE_NAME))?;
+    let state = InstalledState::load(&root, version)?;
     if state.is_none() && !dir.exists() {
         return Err(MlrcError::new(
             ErrorCode::VersionUnknown,
@@ -907,7 +909,7 @@ fn prune_cache(out: &Out, root: &DataRoot, keep_days: Option<u32>) -> MlrcResult
     let mut referenced: BTreeSet<String> = BTreeSet::new();
     let mut stale: Vec<String> = Vec::new();
     for id in subdirs(&root.versions_dir()) {
-        let dir = root.version_dir(&id);
+        let dir = root.state_dir(&id);
         let objects = state::read_objects(&dir)?;
         if objects.is_empty() && dir.join(InstalledState::FILE_NAME).is_file() {
             // Installed before this file existed: pruning would treat the whole
@@ -1014,10 +1016,9 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
             version,
             memory,
         } => {
-            // An instance only owns its game directory; the version it points at has
-            // to exist already.
-            match InstalledState::read(&root.version_dir(version).join(InstalledState::FILE_NAME))?
-            {
+            // A fork holds only a document and a hardlinked jar; the version it points
+            // at has to exist already.
+            match InstalledState::load(&root, version)? {
                 Some(state) if state.complete => {}
                 Some(_) => {
                     return Err(MlrcError::new(
@@ -1245,7 +1246,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             }
 
             let instance = load_instance(&root, instance.as_deref())?;
-            let platform = mod_platform(
+            let (platform, _) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1308,7 +1309,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let source = mods::Source::parse(source)?;
             let key = cfg.curseforge.key();
             let instance = load_instance(&root, instance.as_deref())?;
-            let platform = mod_platform(
+            let (platform, target) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1316,10 +1317,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = match &instance {
-                Some(instance) => Instance::game_dir(&root, &instance.name),
-                None => root.minecraft_dir(),
-            };
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
             if *dry_run {
                 let mut planned = Vec::new();
@@ -1423,7 +1421,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
         }
         ModCommand::List { instance, version } => {
             let instance = load_instance(&root, instance.as_deref())?;
-            let _ = mod_platform(
+            let (_, target) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1431,7 +1429,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = game_dir_for(&root, instance.as_ref());
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
             let dir = mods::mods_dir(&game_dir);
 
             let manifest = mods::manifest::Manifest::load(&game_dir)?;
@@ -1513,7 +1511,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             check,
         } => {
             let instance = load_instance(&root, instance.as_deref())?;
-            let _ = mod_platform(
+            let (_, target) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1521,7 +1519,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = game_dir_for(&root, instance.as_ref());
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
             let sink = ProgressSink::new(!cli.json && !cli.quiet);
             let report = mods::update(
@@ -1590,7 +1588,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             version,
         } => {
             let instance = load_instance(&root, instance.as_deref())?;
-            let _ = mod_platform(
+            let (_, target) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1598,7 +1596,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = game_dir_for(&root, instance.as_ref());
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
             if names.is_empty() {
                 return Err(MlrcError::new(
@@ -1630,7 +1628,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
         } => {
             let enabled = matches!(command, ModCommand::Enable { .. });
             let instance = load_instance(&root, instance.as_deref())?;
-            let _ = mod_platform(
+            let (_, target) = mod_platform(
                 &root,
                 &cfg,
                 version.as_deref(),
@@ -1638,7 +1636,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 None,
                 None,
             )?;
-            let game_dir = game_dir_for(&root, instance.as_ref());
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
             if names.is_empty() {
                 return Err(MlrcError::new(
@@ -1689,13 +1687,6 @@ fn detail(out: &Out, label: &str, value: &str) {
     out.human(format!("{:<13}{value}", format!("{label}:")));
 }
 
-fn game_dir_for(root: &DataRoot, instance: Option<&Instance>) -> std::path::PathBuf {
-    match instance {
-        Some(instance) => Instance::game_dir(root, &instance.name),
-        None => root.minecraft_dir(),
-    }
-}
-
 /// Resolves the loader and Minecraft version to search or install against.
 ///
 /// Explicit `--mc`/`--loader` win; otherwise they come from the target version, which
@@ -1707,7 +1698,10 @@ fn mod_platform(
     instance: Option<&Instance>,
     mc: Option<&str>,
     loader: Option<&str>,
-) -> MlrcResult<mods::Platform> {
+) -> MlrcResult<(mods::Platform, Option<String>)> {
+    let explicit = mc.is_some() && loader.is_some();
+
+    let mut target = None;
     let mut platform = match (mc, loader) {
         (Some(mc), Some(loader)) => mods::Platform {
             mc: mc.to_string(),
@@ -1717,7 +1711,7 @@ fn mod_platform(
             let id = match version {
                 Some(id) => id.to_string(),
                 None => match instance {
-                    Some(instance) => instance.version.clone(),
+                    Some(instance) => instance.name.clone(),
                     None if !cfg.general.default_version.is_empty() => {
                         cfg.general.default_version.clone()
                     }
@@ -1729,6 +1723,7 @@ fn mod_platform(
                     }
                 },
             };
+            target = Some(id.clone());
             mods::platform(root, &id)?
         }
     };
@@ -1750,7 +1745,24 @@ fn mod_platform(
         ));
     }
 
-    Ok(platform)
+    // With both halves named explicitly there is no version to put files in.
+    Ok((platform, if explicit { None } else { target }))
+}
+
+/// The game directory a mod command should touch.
+fn mods_game_dir(
+    root: &DataRoot,
+    instance: Option<&Instance>,
+    target: Option<String>,
+) -> MlrcResult<std::path::PathBuf> {
+    match (instance, target) {
+        (Some(instance), _) => Ok(Instance::game_dir(root, &instance.name)),
+        (None, Some(id)) => Ok(root.game_dir(&id)),
+        (None, None) => Err(MlrcError::new(
+            ErrorCode::Usage,
+            "no version to install into; pass --version or --instance",
+        )),
+    }
 }
 
 fn load_instance(root: &DataRoot, name: Option<&str>) -> MlrcResult<Option<Instance>> {

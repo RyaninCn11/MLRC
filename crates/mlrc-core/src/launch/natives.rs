@@ -1,29 +1,63 @@
 //! Unpacking native libraries.
 //!
-//! Only old versions need this. Since 1.19 the native jars ride on the classpath and
-//! LWJGL extracts what it needs itself, so an empty native set is normal, not a
-//! failure.
+//! Only old versions ship natives the launcher extracts itself. The directory layout
+//! follows the launcher we imitate: one root per version with four subdirectories, so
+//! each library family keeps its own extraction area and the JVM flags can point at
+//! them separately.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
+use crate::meta::version::Artifact;
 use crate::plan::install::InstallPlan;
+use crate::port::DataRoot;
 
-pub fn extract(plan: &InstallPlan, version_dir: &Path) -> MlrcResult<usize> {
-    if plan.natives.is_empty() {
-        return Ok(0);
+/// The four areas, and the order the flags are emitted in.
+pub const CATEGORIES: [&str; 4] = ["java", "jna", "lwjgl", "netty"];
+
+/// `<versions>/<id>/<id>-natives`, a sibling of the version's jar.
+pub fn natives_root(root: &DataRoot, id: &str) -> PathBuf {
+    root.version_dir(id).join(format!("{id}-natives"))
+}
+
+/// Which subdirectory a native jar belongs to.
+///
+/// Classified by the Maven path, which is the only stable identity an artifact has
+/// after the document has been merged.
+pub fn category(artifact: &Artifact) -> &'static str {
+    let path = artifact.path.to_ascii_lowercase();
+    if path.contains("jna") {
+        "jna"
+    } else if path.contains("lwjgl") {
+        "lwjgl"
+    } else if path.contains("netty") {
+        "netty"
+    } else {
+        "java"
     }
+}
 
-    let natives_dir = version_dir.join("natives");
-    std::fs::create_dir_all(&natives_dir)?;
+/// Creates the four directories, which is what the flags expect to exist.
+pub fn prepare(root: &DataRoot, id: &str) -> MlrcResult<PathBuf> {
+    let root_dir = natives_root(root, id);
+    for category in CATEGORIES {
+        std::fs::create_dir_all(root_dir.join(category))?;
+    }
+    Ok(root_dir)
+}
+
+/// Unpacks every native jar into its area.
+pub fn extract(plan: &InstallPlan, root: &DataRoot, id: &str) -> MlrcResult<usize> {
+    let natives_root = prepare(root, id)?;
 
     let mut extracted = 0;
     for artifact in &plan.natives {
-        let jar = natives_dir.join(artifact.file_name());
+        let dir = natives_root.join(category(artifact));
+        let jar = dir.join(artifact.file_name());
         if !jar.is_file() {
             continue;
         }
-        extracted += extract_jar(&jar, &natives_dir)?;
+        extracted += extract_jar(&jar, &dir)?;
     }
     Ok(extracted)
 }
