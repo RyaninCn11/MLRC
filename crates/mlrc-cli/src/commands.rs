@@ -21,7 +21,7 @@ use mlrc_core::install::{
 use mlrc_core::instance::Instance;
 use mlrc_core::java::{discover, runtime};
 use mlrc_core::launch::{self, LaunchOptions};
-use mlrc_core::loader::fabric::Family;
+use mlrc_core::loader::fabric::{self as fabric, Family};
 use mlrc_core::loader::forge::{self, Flavour};
 use mlrc_core::meta::manifest::VersionManifest;
 use mlrc_core::meta::rule::Env;
@@ -47,23 +47,28 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         Command::List { all } => cmd_list(cli, out, *all).await,
         Command::Install {
             version,
+            list,
             dry_run,
             threads,
             java,
             yes,
             loader,
         } => {
-            cmd_install(
-                cli,
-                out,
-                version,
-                *dry_run,
-                *threads,
-                *java,
-                *yes,
-                loader.as_deref(),
-            )
-            .await
+            if *list {
+                install_list(cli, out, loader.as_deref()).await
+            } else {
+                cmd_install(
+                    cli,
+                    out,
+                    version.as_deref().unwrap_or_default(),
+                    *dry_run,
+                    *threads,
+                    *java,
+                    *yes,
+                    loader.as_deref(),
+                )
+                .await
+            }
         }
         Command::Launch {
             version,
@@ -360,33 +365,10 @@ fn cmd_use(cli: &Cli, out: &Out, version: &str) -> MlrcResult<()> {
 }
 
 async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
+    // `--all` is the same list `install --list` prints; one implementation, so the two
+    // cannot drift apart.
     if all {
-        let root = DataRoot::resolve(cli.data_dir.as_deref())?;
-        root.ensure()?;
-        let (client, source) = open_client(cli, &root).await?;
-        announce_source(out, source);
-        let manifest = VersionManifest::load(&client, &root).await?;
-
-        out.human(format!(
-            "{} versions known; latest release {}, latest snapshot {}",
-            manifest.versions.len(),
-            manifest.latest.release,
-            manifest.latest.snapshot
-        ));
-        for version in &manifest.versions {
-            out.human(format!(
-                "{:<26}{:<10}{}",
-                version.id, version.kind, version.release_time
-            ));
-            out.json_event(json!({
-                "schema": 1,
-                "event": "version",
-                "id": version.id,
-                "type": version.kind,
-                "release_time": version.release_time,
-            }));
-        }
-        return Ok(());
+        return install_list(cli, out, None).await;
     }
 
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
@@ -455,6 +437,90 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
             "{marker}{:<23}{:>6}{:>12}  {}",
             id, java, size, status
         ));
+    }
+
+    Ok(())
+}
+
+/// `mlrc install --list`: what can be installed, optionally only what a loader has a
+/// build for.
+///
+/// Mods are deliberately not part of this: there is no bounded list to show, and
+/// `mlrc mod search` is the question people actually have.
+async fn install_list(cli: &Cli, out: &Out, loader: Option<&str>) -> MlrcResult<()> {
+    let root = DataRoot::resolve(cli.data_dir.as_deref())?;
+    root.ensure()?;
+    let (client, source) = open_client(cli, &root).await?;
+    announce_source(out, source);
+    let manifest = VersionManifest::load(&client, &root).await?;
+
+    let (loader_name, _) = parse_loader(loader)?;
+
+    let supported: Option<BTreeSet<String>> = match loader_name {
+        None => None,
+        Some(name) => Some(match Family::parse(name) {
+            Some(family) => fabric::supported_game_versions(&client, family)
+                .await?
+                .into_iter()
+                .collect(),
+            None => {
+                let flavour = Flavour::parse(name).expect("parse_loader checked the name");
+                let known: Vec<String> = manifest
+                    .versions
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect();
+                forge::supported_minecraft_versions(&client, flavour, &known)
+                    .await?
+                    .into_iter()
+                    .collect()
+            }
+        }),
+    };
+
+    let versions: Vec<_> = manifest
+        .versions
+        .iter()
+        .filter(|entry| match &supported {
+            Some(ids) => ids.contains(&entry.id),
+            None => true,
+        })
+        .collect();
+
+    match loader_name {
+        Some(name) => out.human(format!(
+            "{name}: {} of {} versions have a build; latest release {}, latest snapshot {}",
+            versions.len(),
+            manifest.versions.len(),
+            manifest.latest.release,
+            manifest.latest.snapshot
+        )),
+        None => out.human(format!(
+            "{} versions; latest release {}, latest snapshot {}",
+            versions.len(),
+            manifest.latest.release,
+            manifest.latest.snapshot
+        )),
+    }
+    out.human(format!("{:<26}{:<10}{}", "ID", "TYPE", "RELEASED"));
+
+    for version in versions {
+        out.human(format!(
+            "{:<26}{:<10}{}",
+            version.id, version.kind, version.release_time
+        ));
+
+        let mut event = json!({
+            "schema": 1,
+            "event": "version",
+            "id": version.id,
+            "type": version.kind,
+            "release_time": version.release_time,
+        });
+        if let Some(name) = loader_name {
+            event["loader"] = json!(name);
+        }
+        out.json_event(event);
     }
 
     Ok(())

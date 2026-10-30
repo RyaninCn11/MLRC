@@ -52,7 +52,13 @@ pub enum Command {
     /// Install one Minecraft version and, if needed, the Java runtime it requires
     Install {
         /// Version id exactly as the manifest spells it, e.g. 1.18.2
-        version: String,
+        #[arg(required_unless_present = "list")]
+        version: Option<String>,
+
+        /// List the versions that can be installed; with --loader, only the versions
+        /// that loader has a build for
+        #[arg(long)]
+        list: bool,
 
         /// What to do when the required Java runtime is missing
         #[arg(long, value_enum, default_value = "auto")]

@@ -84,6 +84,24 @@ pub async fn resolve(
     resolve_family(client, Family::Fabric, mc, requested).await
 }
 
+#[derive(Debug, Deserialize)]
+struct GameEntry {
+    version: String,
+}
+
+/// Every Minecraft version the loader has a build for, newest first.
+///
+/// One request, not one per version: the meta API publishes the whole list. It
+/// includes snapshots and old alphas, so callers filter it against the manifest.
+pub async fn supported_game_versions(
+    client: &HttpClient,
+    family: Family,
+) -> MlrcResult<Vec<String>> {
+    let url = format!("{}/{}/versions/game", family.base(), family.api());
+    let entries: Vec<GameEntry> = client.get_json(&url).await?;
+    Ok(entries.into_iter().map(|entry| entry.version).collect())
+}
+
 pub async fn resolve_family(
     client: &HttpClient,
     family: Family,

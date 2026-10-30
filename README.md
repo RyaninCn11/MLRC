@@ -47,6 +47,15 @@ mlrc launch 1.18.2
 mlrc use 1.18.2            # remember it for a bare `mlrc launch`
 ```
 
+Not sure which version to pick? `--list` prints them all, and with a loader only the
+ones that loader has a build for:
+
+```bash
+mlrc install --list                    # 921 versions, newest first
+mlrc install --list --loader fabric    # 507 of them
+mlrc install --list --loader neoforge  # 22 of them
+```
+
 **Modded.** Loaders are installed by the same command, and the id it prints is what
 you launch:
 
@@ -114,7 +123,7 @@ mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 
 | Command | Purpose |
 |---|---|
-| `mlrc install <version>` | Install a version; `--loader fabric\|quilt\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
+| `mlrc install <version>` | Install a version; `--list` lists what can be installed, `--loader fabric\|quilt\|forge\|neoforge`, `--java=auto\|install\|skip`, `--dry-run`, `--threads N`, `--yes` |
 | `mlrc launch [<version>]` | Start the game; `--instance <name>`, `--memory 4G`, `--jvm-arg <arg>`, `--lang <code>`, `--dry-run`, `--username`, `--width`/`--height`, `-- <args>` |
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |

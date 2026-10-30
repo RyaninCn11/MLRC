@@ -144,28 +144,110 @@ pub async fn resolve(
 }
 
 /// NeoForge numbers its releases after the Minecraft version: `1.21.1` becomes
-/// `21.1.x`, and the scheme only exists from 1.20.2 onwards.
+/// `21.1.x`, and the scheme only exists from 1.20.2 onwards. A two-part id means the
+/// minor is zero, so `1.21` is `21.0.x`.
+///
+/// The 26.x generation dropped the leading `1`: Minecraft `26.3` is NeoForge `26.3.*`,
+/// so the Minecraft version is the prefix itself.
 fn neoforge_prefix(mc: &str) -> Option<String> {
     let parts: Vec<&str> = mc.split('.').collect();
-    if parts.len() < 3 || parts[0] != "1" {
+    if parts.is_empty() {
+        return None;
+    }
+
+    if parts[0] != "1" {
+        let major: u32 = parts[0].parse().ok()?;
+        return (major >= 26).then(|| format!("{mc}."));
+    }
+
+    if parts.len() < 2 {
         return None;
     }
     let major: u32 = parts[1].parse().ok()?;
-    let minor: u32 = parts[2].parse().ok()?;
+    let minor: u32 = parts.get(2).and_then(|part| part.parse().ok()).unwrap_or(0);
     if major < 20 || (major == 20 && minor < 2) {
         return None;
     }
     Some(format!("{major}.{minor}."))
 }
 
+/// Every Minecraft version this installer flavour has a release for.
+///
+/// `known` is the manifest's version list, newest first: it filters out the aliases a
+/// maven repository accumulates and keeps the output in the order users expect.
+pub async fn supported_minecraft_versions(
+    client: &HttpClient,
+    flavour: Flavour,
+    known: &[String],
+) -> MlrcResult<Vec<String>> {
+    let xml = fetch_metadata(client, flavour).await?;
+    let text = String::from_utf8_lossy(&xml);
+    let versions = parse_versions(&text);
+
+    let supported = match flavour {
+        Flavour::Forge => forge_minecrafts(&versions),
+        Flavour::NeoForge => neoforge_minecrafts(&versions, known),
+    };
+
+    Ok(known
+        .iter()
+        .filter(|id| supported.contains(id.as_str()))
+        .cloned()
+        .collect())
+}
+
+/// Forge spells a release `<minecraft>-<forge>`, including for 26.x (`26.3-66.1.2`).
+fn forge_minecrafts(versions: &[String]) -> std::collections::BTreeSet<String> {
+    versions
+        .iter()
+        .filter_map(|version| version.split_once('-').map(|(mc, _)| mc.to_string()))
+        .collect()
+}
+
+/// NeoForge uses two schemes, and neither can be parsed from the left alone:
+///
+/// - legacy `1.20.1-47.1.106`, where the Minecraft version comes first
+/// - `21.1.80` and `26.3.0.99`, where the Minecraft version is only a *prefix*
+///
+/// For the second form the prefix comes from the known ids and the longest match wins,
+/// so `26.1.2.124` belongs to 26.1.2 rather than 26.1.
+fn neoforge_minecrafts(
+    versions: &[String],
+    known: &[String],
+) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+
+    for version in versions {
+        if let Some((mc, _)) = version.split_once('-') {
+            if mc.starts_with("1.") {
+                out.insert(mc.to_string());
+                continue;
+            }
+        }
+
+        let mut best: Option<(&str, usize)> = None;
+        for id in known {
+            let Some(prefix) = neoforge_prefix(id) else {
+                continue;
+            };
+            let better = version.starts_with(&prefix)
+                && best
+                    .map(|(_, length)| prefix.len() > length)
+                    .unwrap_or(true);
+            if better {
+                best = Some((id, prefix.len()));
+            }
+        }
+        if let Some((id, _)) = best {
+            out.insert(id.to_string());
+        }
+    }
+
+    out
+}
+
 /// Metadata is small and must not hang: a maven host that accepts the connection and
 /// then goes quiet would otherwise hold the command for the full client timeout.
-/// Pre-downloads everything the installer would fetch from its own maven.
-///
-/// NeoForge's installer ignores `--mirror` for library downloads, so on a network
-/// where `maven.neoforged.net` is unreachable the install can never finish. The
-/// installer skips files that already exist, which makes seeding it ourselves the
-/// one reliable way to route those downloads through the configured mirror.
 pub async fn preseed_libraries(
     client: &HttpClient,
     stage: &Path,
@@ -394,8 +476,62 @@ mod tests {
     fn neoforge_prefix_follows_the_minecraft_version() {
         assert_eq!(neoforge_prefix("1.21.1").as_deref(), Some("21.1."));
         assert_eq!(neoforge_prefix("1.20.2").as_deref(), Some("20.2."));
+        // A two-part id means minor zero, and 26.x is its own prefix.
+        assert_eq!(neoforge_prefix("1.21").as_deref(), Some("21.0."));
+        assert_eq!(neoforge_prefix("26.3").as_deref(), Some("26.3."));
         assert_eq!(neoforge_prefix("1.20.1"), None);
         assert_eq!(neoforge_prefix("1.12.2"), None);
+    }
+
+    #[test]
+    fn neoforge_releases_map_back_to_minecraft_versions() {
+        let versions: Vec<String> = [
+            "21.1.80",
+            "21.0.167",
+            "26.3.0.99",
+            "26.1.2.124",
+            "1.20.1-47.1.106",
+            "26.4.0.1",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+        let known: Vec<String> = [
+            "26.4-snapshot-6",
+            "26.3",
+            "26.1.2",
+            "26.1",
+            "1.21.1",
+            "1.21",
+            "1.20.1",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+
+        let minecrafts = neoforge_minecrafts(&versions, &known);
+        // `26.1.2.124` must not also claim 26.1, and `26.4.0.1` matches no known id.
+        assert_eq!(
+            minecrafts.iter().cloned().collect::<Vec<_>>(),
+            vec!["1.20.1", "1.21", "1.21.1", "26.1.2", "26.3"]
+        );
+    }
+
+    #[test]
+    fn forge_releases_carry_their_minecraft_version_first() {
+        let versions: Vec<String> = [
+            "26.3-66.1.2",
+            "1.20.1-47.4.28",
+            "1.7.10-10.13.4.1614-1.7.10",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect();
+        let minecrafts = forge_minecrafts(&versions);
+        assert_eq!(
+            minecrafts.iter().cloned().collect::<Vec<_>>(),
+            vec!["1.20.1", "1.7.10", "26.3"]
+        );
     }
 
     #[test]

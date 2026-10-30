@@ -192,6 +192,21 @@ Three details make that workable:
 `install_installer` passes `--mirror` when BMCLAPI is configured and streams the
 installer's output with heartbeats, because it can be silent for minutes.
 
+### What each loader supports
+
+`install --list --loader` needs the coverage, not one probe per Minecraft version, so
+each loader asks its own source:
+
+- Fabric and Quilt: `/v2/versions/game` and `/v3/versions/game`, one request each.
+- Forge: every maven version starts with the Minecraft version, so the prefix is the
+  answer (`26.3-66.1.2`, `1.7.10-10.13.4.1614-1.7.10`).
+- NeoForge: two schemes. Legacy entries are `1.20.1-47.1.106`; modern ones are
+  `21.1.80` or `26.3.0.99`, where the Minecraft version is the prefix and the manifest
+  decides - the longest matching id wins, so `26.1.2.124` is 26.1.2 and not 26.1.
+
+The result is filtered against the manifest, so a repository alias never shows up as a
+version that cannot be installed.
+
 ---
 
 ## 8. Mods

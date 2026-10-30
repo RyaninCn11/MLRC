@@ -183,7 +183,18 @@ Forge and NeoForge are installers that patch the client themselves. In both case
 result is an ordinary version, so `launch`, `mod` and `fork` need no special cases.
 The mechanics are in [DEVELOPMENT.md](DEVELOPMENT.md#7-loaders).
 
-### 4.4 Mods and packs
+### 4.4 Listing what can be installed
+
+`mlrc install --list` prints every version the manifest knows, newest first: the whole
+list, because a launcher that hides snapshots or old releases is making a choice for
+the user. With `--loader`, it prints only the versions that loader has a build for -
+one request, since each loader publishes its coverage (the meta APIs list supported
+game versions, the Forge and NeoForge maven metadata is mapped back to Minecraft ids).
+
+Mods get no such list on purpose: there is no bounded answer, and `mlrc mod search` is
+the question people actually have.
+
+### 4.5 Mods and packs
 
 `mlrc mod` searches Modrinth and picks a version for the loader and Minecraft version
 of an installed version; required dependencies come with it. CurseForge is a second
@@ -266,6 +277,7 @@ distribution folder. Access tokens are masked everywhere, including `-v` and `--
 ```
 mlrc install <version> [--loader fabric|quilt|forge|neoforge[:<version>]]
              [--java=auto|install|skip] [--yes] [--dry-run] [--threads N]
+mlrc install --list [--loader fabric|quilt|forge|neoforge]
 mlrc launch [<version>] [--instance <name>] [--lang <code>] [--memory <size>]
             [--jvm-arg <arg>] [--offline] [--username <n>]
             [--width N] [--height N] [--dry-run] [-- <game args>]
