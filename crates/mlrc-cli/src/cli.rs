@@ -361,6 +361,15 @@ pub enum AuthCommand {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Open the unified pass registration page for a server
+    Register {
+        /// Unified pass server id; defaults to auth.nide8_id
+        #[arg(long, value_name = "ID")]
+        nide8: Option<String>,
+        /// Print the url without opening a browser
+        #[arg(long)]
+        print_only: bool,
+    },
     /// Forget the stored account and revoke its token
     Logout,
     /// Show the current account

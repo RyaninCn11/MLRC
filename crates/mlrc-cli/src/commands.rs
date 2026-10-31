@@ -257,6 +257,38 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             }
             Ok(())
         }
+        AuthCommand::Register { nide8, print_only } => {
+            let id = nide8
+                .clone()
+                .or_else(|| Some(cfg.auth.nide8_id.clone()).filter(|value| !value.is_empty()))
+                .ok_or_else(|| {
+                    MlrcError::new(
+                        ErrorCode::Usage,
+                        "no unified pass server; pass --nide8 <id> or `mlrc config set auth.nide8_id <id>`",
+                    )
+                })?;
+            let url = auth::nide8::register_url(auth::nide8::validate_id(&id)?);
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "register",
+                    "url": url,
+                }));
+            } else {
+                out.human(format!("register: {url}"));
+            }
+
+            if !print_only {
+                match open_in_browser(&url) {
+                    Ok(()) => {}
+                    Err(error) => out.human(format!(
+                        "could not open a browser ({error}); open the url above"
+                    )),
+                }
+            }
+            Ok(())
+        }
         AuthCommand::Logout => {
             let session = auth::yggdrasil::Session::load(&root)?;
             if let Some(session) = session {
@@ -2135,6 +2167,26 @@ fn pack_target(
     Ok((id, game_dir))
 }
 
+/// Opens a url in the user's browser, best effort.
+///
+/// The url is printed either way, so a machine without a desktop - a server, a
+/// container - still gets something to copy.
+fn open_in_browser(url: &str) -> MlrcResult<()> {
+    #[cfg(windows)]
+    let spawned = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(url).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(url).spawn();
+
+    spawned
+        .map(|_| ())
+        .map_err(|err| MlrcError::new(ErrorCode::Io, err.to_string()))
+}
 /// The unified pass client jar: configured, or the conventional spot in the data folder.
 ///
 /// The service publishes no download url, so a launcher either ships the jar or asks the

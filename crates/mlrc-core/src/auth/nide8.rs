@@ -64,13 +64,15 @@ struct Document {
     jar_hash: String,
 }
 
+/// The real service answers `"serverIP": null` when it has none, so these are options:
+/// `#[serde(default)]` covers a missing key, not an explicit null.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Meta {
     #[serde(default)]
-    server_name: String,
+    server_name: Option<String>,
     #[serde(default, rename = "serverIP")]
-    server_ip: String,
+    server_ip: Option<String>,
 }
 
 /// Fetches the server document and resolves the base url.
@@ -85,8 +87,8 @@ pub async fn discover(client: &HttpClient, server_id: &str) -> MlrcResult<Server
     Ok(Server {
         id: id.to_string(),
         api_root: resolve(&url, &document.api_root),
-        name: document.meta.server_name,
-        ip: document.meta.server_ip,
+        name: document.meta.server_name.unwrap_or_default(),
+        ip: document.meta.server_ip.unwrap_or_default(),
         jar_sha1: document.jar_hash.to_ascii_lowercase(),
     })
 }
@@ -177,6 +179,26 @@ mod tests {
         let awkward = std::path::Path::new("C:/ga=mes/1.21.1/nide8auth.jar");
         let arguments = java_arguments(awkward, "abc", awkward_cwd);
         assert_eq!(arguments[0], "-javaagent:nide8auth.jar=abc");
+    }
+
+    #[test]
+    fn a_document_with_nulls_still_parses() {
+        // Exactly what the live service returned, minus the fields this launcher
+        // ignores. `serverIP` is null, which a plain String field would reject.
+        let document: Document = serde_json::from_str(
+            r#"{"meta":{"serverName":"name","serverIP":null},
+                "apiRoot":"https://auth.mc-user.com:233/abc/",
+                "jarHash":"153554E1953CBA2E4BDBA01F49DBA7886E33D242"}"#,
+        )
+        .expect("parses");
+
+        assert_eq!(document.meta.server_name.as_deref(), Some("name"));
+        assert_eq!(document.meta.server_ip, None);
+        assert_eq!(
+            resolve("https://auth.mc-user.com:233/abc/", &document.api_root),
+            "https://auth.mc-user.com:233/abc/"
+        );
+        assert_eq!(document.jar_hash.to_ascii_lowercase().len(), 40);
     }
 
     #[test]

@@ -275,7 +275,9 @@ offline-capable.
 `apiRoot` is the real endpoint (plus the server's name, address and the hash of its
 client component), and login, refresh and validate are the Yggdrasil calls against that
 root. `mlrc auth login --nide8 <id>` does exactly that, and `mlrc config set
-auth.nide8_id <id>` makes it the default.
+auth.nide8_id <id>` makes it the default. `mlrc auth register` prints the server's
+registration page and opens it in a browser, since creating the account is the step
+before logging in.
 
 The game then needs `-javaagent:nide8auth.jar=<id>` and `-Dnide8auth.client=true`, or it
 talks to Mojang and never joins that server. The jar is the user's: the service
@@ -378,7 +380,8 @@ mlrc mod search <query> [--mc <ver>] [--loader <name>] [--instance <n>] [--limit
 mlrc mod install <project...> [--source modrinth|curseforge] [--dry-run] [--instance <n>]
 mlrc mod list | update [--check] | remove <project|file...> | disable | enable
 mlrc java list | install <component|major> | remove <major>
-mlrc auth login [--server <url>] [--username <n>] [--password-stdin] | logout | status
+mlrc auth login [--server <url> | --nide8 <id>] [--username <n>] [--password-stdin]
+mlrc auth register [--nide8 <id>] [--print-only] | logout | status
 mlrc config get <key> | set <key> <value> | list
 mlrc cache prune [--keep-days N]
 mlrc doctor

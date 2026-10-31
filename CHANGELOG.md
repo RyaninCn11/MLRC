@@ -13,6 +13,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Minecraft Unified Pass (Nide8) login: `mlrc auth login --nide8 <32-hex server id>`.
   The server document supplies the real API root, and the game is started with the
   server's `nide8auth.jar` and the two arguments that component requires.
+  `mlrc auth register` opens the server's registration page.
 - Resource packs, shader packs and data packs: `mlrc pack search|install|list|remove`.
   The kind is read from Modrinth instead of demanded as a flag, and `--world` places a
   data pack inside one world. When a project publishes both a mod build and a plain one
