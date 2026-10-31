@@ -36,6 +36,28 @@ pub fn read_release_major(home: &Path) -> Option<u32> {
     parse_major(line.trim().trim_matches('"'))
 }
 
+/// The update number of a Java 8 runtime: `1.8.0_202` -> 202, `8u51` -> 51.
+///
+/// Unified Pass refuses anything below 8u101, and that is an update number, not a
+/// version: `1.8.0_51` and `1.8.0_202` share a major.
+pub fn read_release_update(home: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(home.join("release")).ok()?;
+    let version = text
+        .lines()
+        .find_map(|line| line.strip_prefix("JAVA_VERSION="))?
+        .trim()
+        .trim_matches('"');
+    parse_update(version)
+}
+
+/// `1.8.0_202` -> 202, `8u51-cacert462b08` -> 51, other majors -> None.
+pub fn parse_update(version: &str) -> Option<u32> {
+    let rest = version
+        .strip_prefix("1.8.0_")
+        .or_else(|| version.strip_prefix("8u"))?;
+    leading_digits(rest)
+}
+
 /// `17.0.15` -> 17, `25.0.1` -> 25, `1.8.0_202` -> 8, `8u51-cacert462b08` -> 8.
 pub fn parse_major(version: &str) -> Option<u32> {
     let mut parts = version.split(['.', '_', '-', '+']);

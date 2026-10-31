@@ -39,6 +39,13 @@ pub struct Session {
     pub uuid: String,
     pub access_token: String,
     pub client_token: String,
+    /// `yggdrasil` or `nide8`. Empty means yggdrasil: what every session before
+    /// unified pass existed means.
+    #[serde(default)]
+    pub kind: String,
+    /// Unified pass server id, when `kind` is `nide8`.
+    #[serde(default)]
+    pub server_id: String,
 }
 
 impl std::fmt::Debug for Session {
@@ -162,6 +169,8 @@ pub async fn authenticate(
         } else {
             credentials.client_token
         },
+        kind: String::new(),
+        server_id: String::new(),
     })
 }
 
@@ -198,6 +207,8 @@ pub async fn refresh(client: &HttpClient, session: &Session) -> MlrcResult<Sessi
         } else {
             credentials.client_token
         },
+        kind: session.kind.clone(),
+        server_id: session.server_id.clone(),
     })
 }
 
@@ -570,6 +581,8 @@ mod tests {
             uuid: "b50ad385-829d-3141-a216-7e7d7539ba7f".to_string(),
             access_token: "secret-access-token".to_string(),
             client_token: "secret-client-token".to_string(),
+            kind: String::new(),
+            server_id: String::new(),
         };
 
         let text = format!("{session:?}");

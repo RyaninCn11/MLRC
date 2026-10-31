@@ -120,20 +120,37 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
     match command {
         AuthCommand::Login {
             server,
+            nide8,
             username,
             password_stdin,
         } => {
-            let server = server
+            // Unified pass is the same protocol behind a discoverable base url, so the
+            // only difference here is where that base comes from.
+            let nide8_id = nide8
                 .clone()
-                .or_else(|| Some(cfg.auth.server.clone()).filter(|value| !value.is_empty()))
-                .ok_or_else(|| {
-                    MlrcError::new(
-                        ErrorCode::Usage,
-                        "no authentication server; pass --server or `mlrc config set auth.server <url>`",
-                    )
-                })?;
-            let server = auth::validate_server(&server)?;
+                .or_else(|| Some(cfg.auth.nide8_id.clone()).filter(|value| !value.is_empty()));
+            if let Some(id) = &nide8_id {
+                auth::nide8::validate_id(id)?;
+            }
 
+            let server = match (&nide8_id, server) {
+                (None, Some(server)) => Some(auth::validate_server(server)?),
+                (None, None) => {
+                    let configured = cfg.auth.server.clone();
+                    if configured.is_empty() {
+                        None
+                    } else {
+                        Some(auth::validate_server(&configured)?)
+                    }
+                }
+                (Some(_), _) => None,
+            };
+            if nide8_id.is_none() && server.is_none() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no authentication server; pass --server or --nide8, or set one with `mlrc config set`",
+                ));
+            }
             let username = match username {
                 Some(name) => name.clone(),
                 None => prompt_line("username: ")?,
@@ -151,18 +168,68 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             };
 
             let (client, mirror) = open_client(cli, &root).await?;
-            let session =
+
+            // The unified pass base url comes from the server document, so discovery
+            // happens once the client exists.
+            let mut unified = None;
+            let server = match &nide8_id {
+                Some(id) => {
+                    let discovered = auth::nide8::discover(&client, id).await?;
+                    out.human(format!(
+                        "unified pass: {} ({})",
+                        if discovered.name.is_empty() {
+                            "unnamed server"
+                        } else {
+                            discovered.name.as_str()
+                        },
+                        if discovered.ip.is_empty() {
+                            "no address"
+                        } else {
+                            discovered.ip.as_str()
+                        }
+                    ));
+                    let root_url = discovered.api_root.clone();
+                    unified = Some(discovered);
+                    root_url
+                }
+                None => server.expect("checked before the prompt"),
+            };
+
+            let mut session =
                 auth::yggdrasil::authenticate(&client, &server, username.trim(), &password, None)
                     .await?;
+            if let Some(discovered) = &unified {
+                session.kind = "nide8".to_string();
+                session.server_id = discovered.id.clone();
+            }
             session.save(&root)?;
 
-            // Remember the server so `mlrc launch` keeps using it, and fetch the
-            // injector now rather than delaying the first launch.
-            if cfg.auth.server != server {
-                cfg.auth.server = server.clone();
-                cfg.save(&root.config_path())?;
+            // Remember where the account came from so `mlrc launch` can find it again,
+            // and fetch the client component now rather than delaying the first launch.
+            match (&unified, &server) {
+                (Some(discovered), _) if cfg.auth.nide8_id != discovered.id => {
+                    cfg.auth.nide8_id = discovered.id.clone();
+                    cfg.save(&root.config_path())?;
+                }
+                (None, server) if cfg.auth.server != *server => {
+                    cfg.auth.server = server.clone();
+                    cfg.save(&root.config_path())?;
+                }
+                _ => {}
             }
-            let injector = auth::yggdrasil::ensure_injector(&client, &root, mirror).await?;
+
+            // A unified pass client is the user's own jar: the service publishes no
+            // download url, so this only reports where it looked.
+            let injector = match unified {
+                Some(_) => match nide8_jar(&root, &cfg) {
+                    Ok(_) => None,
+                    Err(error) => {
+                        out.human(format!("warning: {}", error.message));
+                        None
+                    }
+                },
+                None => Some(auth::yggdrasil::ensure_injector(&client, &root, mirror).await?),
+            };
 
             if out.is_json() {
                 out.json_event(json!({
@@ -172,15 +239,21 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                         "server": session.server,
                         "name": session.name,
                         "uuid": session.uuid,
+                        "kind": if session.kind.is_empty() { "yggdrasil" } else { session.kind.as_str() },
                     },
-                    "injector": injector.build,
+                    "injector": injector.as_ref().map(|injector| injector.build),
                 }));
             } else {
                 out.human(format!(
                     "signed in as {} ({}) on {}",
                     session.name, session.uuid, session.server
                 ));
-                out.human(format!("authlib-injector build {}", injector.build));
+                match &injector {
+                    Some(injector) => {
+                        out.human(format!("authlib-injector build {}", injector.build))
+                    }
+                    None => out.human("unified pass: nide8auth.jar found"),
+                }
             }
             Ok(())
         }
@@ -226,9 +299,18 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             } else {
                 match &session {
                     Some(session) => {
+                        let kind = if session.kind.is_empty() {
+                            "yggdrasil"
+                        } else {
+                            session.kind.as_str()
+                        };
                         out.human(format!("account:  {}", session.name));
                         out.human(format!("uuid:     {}", session.uuid));
+                        out.human(format!("kind:     {kind}"));
                         out.human(format!("server:   {}", session.server));
+                        if !session.server_id.is_empty() {
+                            out.human(format!("server id: {}", session.server_id));
+                        }
                         out.human(format!("login:    {}", session.username));
                     }
                     None => out.human("account:  none (offline mode)"),
@@ -1154,6 +1236,31 @@ async fn cmd_launch(
 
     let mut jvm_args = jvm_args.to_vec();
     let identity = match &session {
+        Some(session) if session.kind == "nide8" => {
+            // Unified Pass needs two things the other backends do not: its own client
+            // component on the JVM, and Java 8u101 or newer, below which that component
+            // cannot hook the game.
+            if java.major == 8 {
+                let update = discover::read_release_update(&java.home).unwrap_or(0);
+                if update < 101 {
+                    return Err(MlrcError::new(
+                        ErrorCode::JavaTooOld,
+                        format!(
+                            "unified pass needs java 8u101 or newer; this runtime is 8u{update}"
+                        ),
+                    )
+                    .with("hint", "install a newer runtime with `mlrc java install 8`"));
+                }
+            }
+
+            let jar = nide8_jar(&root, &cfg)?;
+            jvm_args.extend(auth::nide8::java_arguments(
+                &jar,
+                &session.server_id,
+                &game_dir,
+            ));
+            session.identity()
+        }
         Some(session) => {
             let injector = auth::yggdrasil::cached_injector(&root)?.ok_or_else(|| {
                 MlrcError::new(
@@ -2028,6 +2135,30 @@ fn pack_target(
     Ok((id, game_dir))
 }
 
+/// The unified pass client jar: configured, or the conventional spot in the data folder.
+///
+/// The service publishes no download url, so a launcher either ships the jar or asks the
+/// user for it. This asks, with the exact path it looked at.
+fn nide8_jar(root: &DataRoot, cfg: &Config) -> MlrcResult<std::path::PathBuf> {
+    let path = if cfg.auth.nide8_jar.trim().is_empty() {
+        root.injector_dir().join("nide8auth.jar")
+    } else {
+        std::path::PathBuf::from(cfg.auth.nide8_jar.trim())
+    };
+
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(MlrcError::new(
+            ErrorCode::AuthFailed,
+            format!("nide8auth.jar is missing at {}", path.display()),
+        )
+        .with(
+            "hint",
+            "put the server's nide8auth.jar there, or set `mlrc config set auth.nide8_jar <path>`",
+        ))
+    }
+}
 fn pack_kind(text: &str) -> MlrcResult<mods::Kind> {
     match mods::Kind::parse(text) {
         Some(mods::Kind::Mod) => Err(MlrcError::new(

@@ -111,6 +111,8 @@ setting is how a document drifts. Typing one now fails with the key that was mea
 | `launch.pre_launch` | shell command, empty | run in the game directory before the game starts |
 | `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only |
 | `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name |
+| `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode |
+| `auth.nide8_jar` | path, empty | `nide8auth.jar`; empty means `MLRC/injector/nide8auth.jar` |
 | `curseforge.api_key` | key, empty | enables the CurseForge source; `none` clears |
 
 Environment variables, which win over the file: `MLRC_DATA_DIR` (the base directory)
@@ -267,6 +269,21 @@ server. Without it the game authenticates locally and then fails to join the ser
 online-mode servers, with an error that blames the server. The jar is fetched once,
 verified against the published SHA-256, then reused from disk so launches stay
 offline-capable.
+
+**Unified Pass.** A different service with the same protocol: a server owner hands out a
+32 character id, `https://auth.mc-user.com:233/<id>/` answers with a document whose
+`apiRoot` is the real endpoint (plus the server's name, address and the hash of its
+client component), and login, refresh and validate are the Yggdrasil calls against that
+root. `mlrc auth login --nide8 <id>` does exactly that, and `mlrc config set
+auth.nide8_id <id>` makes it the default.
+
+The game then needs `-javaagent:nide8auth.jar=<id>` and `-Dnide8auth.client=true`, or it
+talks to Mojang and never joins that server. The jar is the user's: the service
+publishes no download url, so the launcher looks at `auth.nide8_jar`, then
+`MLRC/injector/nide8auth.jar`, and names the path it checked when neither exists. Java
+8u101 or newer is required by that component, and this is checked before launch rather
+than left to a failed start. A path containing `=` is passed relative to the game
+directory, because Java splits the agent argument on the first `=`.
 
 The token has a lifetime, and the launcher treats it as one: before starting the game it
 asks the server whether the token is still valid, refreshes it when the answer is no,

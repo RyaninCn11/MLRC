@@ -170,6 +170,8 @@ async fn validate_says_whether_the_token_still_works() {
         uuid: "b50ad385-829d-3141-a216-7e7d7539ba7f".to_string(),
         access_token: "token-1".to_string(),
         client_token: "client-1".to_string(),
+        kind: String::new(),
+        server_id: String::new(),
     };
 
     assert_eq!(
@@ -208,6 +210,8 @@ async fn refresh_replaces_the_token_and_can_rename_the_profile() {
         uuid: "b50ad385-829d-3141-a216-7e7d7539ba7f".to_string(),
         access_token: "token-1".to_string(),
         client_token: "client-1".to_string(),
+        kind: String::new(),
+        server_id: String::new(),
     };
 
     let refreshed = yggdrasil::refresh(&client(), &session)
@@ -234,6 +238,8 @@ async fn a_stored_session_survives_a_restart() {
         uuid: "b50ad385-829d-3141-a216-7e7d7539ba7f".to_string(),
         access_token: "token-1".to_string(),
         client_token: "client-1".to_string(),
+        kind: String::new(),
+        server_id: String::new(),
     };
     session.save(&root).expect("save");
 

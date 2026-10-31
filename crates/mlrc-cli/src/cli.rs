@@ -346,11 +346,14 @@ pub enum JavaCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum AuthCommand {
-    /// Sign in to a Yggdrasil server (third-party authentication)
+    /// Sign in to a Yggdrasil or unified pass server
     Login {
         /// API root, e.g. https://littleskin.cn/api/yggdrasil. Defaults to auth.server.
         #[arg(long, value_name = "URL")]
         server: Option<String>,
+        /// Unified pass server id: 32 hexadecimal characters. Defaults to auth.nide8_id.
+        #[arg(long, value_name = "ID", overrides_with = "server")]
+        nide8: Option<String>,
         /// Name or email. Asked for when omitted.
         #[arg(long, short = 'u')]
         username: Option<String>,

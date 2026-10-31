@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 15] = [
+pub const KEYS: [&str; 17] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -22,6 +22,8 @@ pub const KEYS: [&str; 15] = [
     "launch.pre_launch",
     "auth.server",
     "auth.player_name",
+    "auth.nide8_id",
+    "auth.nide8_jar",
     "curseforge.api_key",
 ];
 
@@ -98,6 +100,10 @@ pub struct AuthConfig {
     pub server: String,
     /// Name used in offline mode; an account's own name wins when one is stored.
     pub player_name: String,
+    /// Unified pass server id, 32 hexadecimal characters. Empty disables the mode.
+    pub nide8_id: String,
+    /// Path to `nide8auth.jar`. Empty means `MLRC/injector/nide8auth.jar`.
+    pub nide8_jar: String,
 }
 
 impl Default for AuthConfig {
@@ -105,6 +111,8 @@ impl Default for AuthConfig {
         Self {
             server: String::new(),
             player_name: "Player".to_string(),
+            nide8_id: String::new(),
+            nide8_jar: String::new(),
         }
     }
 }
@@ -251,6 +259,8 @@ impl Config {
             "launch.pre_launch" => self.launch.pre_launch.clone(),
             "auth.server" => self.auth.server.clone(),
             "auth.player_name" => self.auth.player_name.clone(),
+            "auth.nide8_id" => self.auth.nide8_id.clone(),
+            "auth.nide8_jar" => self.auth.nide8_jar.clone(),
             "curseforge.api_key" => self.curseforge.api_key.clone(),
             other => return Err(unknown_key(other)),
         })
@@ -319,6 +329,23 @@ impl Config {
                 let name = value.trim();
                 crate::auth::offline::validate_name(name)?;
                 self.auth.player_name = name.to_string();
+            }
+            "auth.nide8_id" => {
+                let cleared = value.trim().is_empty() || value.eq_ignore_ascii_case("none");
+                self.auth.nide8_id = if cleared {
+                    String::new()
+                } else {
+                    crate::auth::nide8::validate_id(value)?.to_string()
+                };
+            }
+            "auth.nide8_jar" => {
+                let trimmed = value.trim();
+                self.auth.nide8_jar = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none")
+                {
+                    String::new()
+                } else {
+                    trimmed.to_string()
+                };
             }
             "curseforge.api_key" => {
                 // `none` clears it, because an empty shell argument is awkward to pass.

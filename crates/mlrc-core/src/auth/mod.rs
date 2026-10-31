@@ -6,6 +6,7 @@
 //! 2. the player name from the config, in offline mode (the default);
 //! 3. `--username`, which overrides both.
 
+pub mod nide8;
 pub mod offline;
 pub mod yggdrasil;
 
