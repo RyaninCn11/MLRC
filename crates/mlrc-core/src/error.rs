@@ -14,6 +14,7 @@ pub enum ErrorCode {
     NotImplemented,
     Network,
     HashMismatch,
+    SizeMismatch,
     MetaShape,
     PortableReadOnly,
     VersionUnknown,
@@ -40,6 +41,7 @@ impl ErrorCode {
             Self::NotImplemented => "E_NOT_IMPLEMENTED",
             Self::Network => "E_NET_HTTP",
             Self::HashMismatch => "E_NET_HASH",
+            Self::SizeMismatch => "E_NET_SIZE",
             Self::MetaShape => "E_META_SHAPE",
             Self::PortableReadOnly => "E_PORTABLE_READONLY",
             Self::VersionUnknown => "E_VERSION_UNKNOWN",
@@ -61,7 +63,7 @@ impl ErrorCode {
     pub const fn exit_code(self) -> i32 {
         match self {
             Self::Usage => 2,
-            Self::Network => 3,
+            Self::Network | Self::SizeMismatch => 3,
             Self::JavaMissing | Self::JavaTooOld | Self::JavaMetaMissing | Self::JavaInUse => 5,
             Self::MetaShape => 6,
             Self::PortableReadOnly => 7,

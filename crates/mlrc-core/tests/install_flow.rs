@@ -249,8 +249,12 @@ async fn a_corrupted_download_fails_with_the_hash_code() {
     let server = Server::start(|base| {
         let mut routes = HashMap::new();
         routes.insert("/assets/17.json".to_string(), ASSET_INDEX.to_vec());
-        // The document promises the real bytes; the server serves something else.
-        routes.insert("/objects/client.jar".to_string(), b"corrupted".to_vec());
+        // The document promises a 19 byte jar; the server serves 19 bytes of rubbish,
+        // so the length agrees and only the hash can catch it.
+        routes.insert(
+            "/objects/client.jar".to_string(),
+            vec![b'x'; CLIENT_JAR.len()],
+        );
         routes.insert("/objects/fake-lib.jar".to_string(), LIBRARY_JAR.to_vec());
         routes.insert(
             "/versions/1.21.1.json".to_string(),
@@ -268,6 +272,41 @@ async fn a_corrupted_download_fails_with_the_hash_code() {
         .expect_err("a corrupted file must not be accepted");
 
     assert_eq!(error.code, ErrorCode::HashMismatch, "{error:?}");
+    assert!(
+        !InstalledState::path(&root, "1.21.1").is_file(),
+        "a failed install must not claim to be complete"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn a_truncated_download_fails_with_the_length_code() {
+    let server = Server::start(|base| {
+        let mut routes = HashMap::new();
+        routes.insert("/assets/17.json".to_string(), ASSET_INDEX.to_vec());
+        // Half a jar, while the document still promises all of it.
+        routes.insert(
+            "/objects/client.jar".to_string(),
+            CLIENT_JAR[..CLIENT_JAR.len() / 2].to_vec(),
+        );
+        routes.insert("/objects/fake-lib.jar".to_string(), LIBRARY_JAR.to_vec());
+        routes.insert(
+            "/versions/1.21.1.json".to_string(),
+            version_document(base, &sha1(CLIENT_JAR), CLIENT_JAR.len()).into_bytes(),
+        );
+        routes
+    });
+
+    let (root, dir) = data_dir();
+    std::fs::write(VersionManifest::cache_path(&root), manifest(&server.base)).unwrap();
+
+    let client = HttpClient::new(Mirror::Official).expect("client");
+    let error = install(&client, &root, "1.21.1", &options(), &NullSink)
+        .await
+        .expect_err("a short file must not be accepted");
+
+    assert_eq!(error.code, ErrorCode::SizeMismatch, "{error:?}");
     assert!(
         !InstalledState::path(&root, "1.21.1").is_file(),
         "a failed install must not claim to be complete"

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 use crate::events::{Event, EventSink};
+use crate::fetch::checksum::Checksum;
 use crate::fetch::HttpClient;
 use crate::meta::version::VersionJson;
 use crate::port::DataRoot;
@@ -435,16 +436,19 @@ pub async fn install(
         });
 
         let bytes = fetch_bytes(http, &file.url).await?;
-        if !file.hashes.sha1.is_empty() {
-            let actual = sha1_of(&bytes);
-            if actual != file.hashes.sha1 {
-                return Err(MlrcError::new(
-                    ErrorCode::HashMismatch,
-                    format!("hash mismatch for {}", file.filename),
-                )
-                .with("expected", file.hashes.sha1.clone())
-                .with("actual", actual));
-            }
+        // Modrinth publishes SHA1 and SHA512 for the same file; the stronger one is
+        // what gets checked, and it is what makes a corrupted or substituted jar fail
+        // here rather than inside the game.
+        if let Some(checksum) = Checksum::strongest(&file.hashes.sha1, "", &file.hashes.sha512) {
+            checksum.verify(&bytes, &file.filename)?;
+        } else {
+            sink.emit(Event::Warning {
+                code: "E_NET_UNVERIFIED".to_string(),
+                message: format!(
+                    "{} came from a source that publishes no hash; only its length was checked",
+                    file.filename
+                ),
+            });
         }
 
         // Write beside the target first: a half-written jar in `mods/` breaks the game.
