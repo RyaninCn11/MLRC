@@ -1,8 +1,8 @@
 //! `config.toml`: the only file a user is expected to edit by hand.
 //!
-//! Two layers exist. `MLRC/config.toml` is the global one; a fork's `instance.json`
+//! Two layers exist. `MLRC/config.toml` is the global one; a instance's `instance.json`
 //! carries its own `java.*`, `launch.*` and `auth.account`, and whatever it leaves empty
-//! is inherited. [`ForkConfig::apply`] folds them into the [`Effective`] settings a
+//! is inherited. [`InstanceConfig::apply`] folds them into the [`Effective`] settings a
 //! launch actually uses.
 
 use std::path::Path;
@@ -13,7 +13,7 @@ use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
 ///
-/// `auth.account` is not here: it only exists per fork, because the default account is
+/// `auth.account` is not here: it only exists per instance, because the default account is
 /// chosen from the account list rather than from a configuration value.
 pub const KEYS: [&str; 18] = [
     "java.custom",
@@ -52,7 +52,7 @@ pub struct Config {
 /// How the game is started, in the parts a launcher may influence.
 ///
 /// Every field is "empty means unset", so the same struct serves the global file and a
-/// fork's own overrides, and merging them is a field-by-field choice.
+/// instance's own overrides, and merging them is a field-by-field choice.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LaunchConfig {
@@ -91,7 +91,7 @@ impl LaunchConfig {
             && self.game_language.trim().is_empty()
     }
 
-    /// The keys a fork may own, in the order `config list` prints them.
+    /// The keys a instance may own, in the order `config list` prints them.
     pub const KEYS: [&'static str; 5] = [
         "launch.brand",
         "launch.jvm_args",
@@ -166,7 +166,7 @@ impl LaunchConfig {
     }
 }
 
-/// A fork's own Java settings.
+/// A instance's own Java settings.
 ///
 /// `custom` is tri-state: `None` inherits the global value, because "false" and "not
 /// overridden" are different answers for a boolean.
@@ -246,7 +246,7 @@ impl JavaLayer {
     }
 }
 
-/// A fork's own account choice: a label into `accounts.json`, or empty for the default.
+/// A instance's own account choice: a label into `accounts.json`, or empty for the default.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthLayer {
@@ -282,16 +282,16 @@ impl AuthLayer {
     }
 }
 
-/// Everything a fork may override, stored in its `instance.json`.
+/// Everything a instance may override, stored in its `instance.json`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ForkConfig {
+pub struct InstanceConfig {
     pub launch: LaunchConfig,
     pub java: JavaLayer,
     pub auth: AuthLayer,
 }
 
-impl ForkConfig {
+impl InstanceConfig {
     pub fn get_key(&self, key: &str) -> MlrcResult<String> {
         match key {
             key if key.starts_with("launch.") => self.launch.get_key(key),
@@ -334,13 +334,13 @@ pub struct Effective {
     pub account: String,
 }
 
-/// Whether a key may be set per fork.
-pub fn is_fork_key(key: &str) -> bool {
+/// Whether a key may be set per instance.
+pub fn is_instance_key(key: &str) -> bool {
     key.starts_with("launch.") || key.starts_with("java.") || key == "auth.account"
 }
 
-/// Whether a key only exists in a fork's layer.
-pub fn is_fork_only(key: &str) -> bool {
+/// Whether a key only exists in a instance's layer.
+pub fn is_instance_only(key: &str) -> bool {
     key == "auth.account"
 }
 
@@ -667,7 +667,7 @@ impl Config {
             "auth.account" => {
                 return Err(MlrcError::new(
                     ErrorCode::Config,
-                    "auth.account only exists per fork; pass --instance <name>",
+                    "auth.account only exists per instance; pass --instance <name>",
                 ))
             }
             other => return Err(unknown_key(other)),
@@ -772,7 +772,7 @@ impl Config {
             "auth.account" => {
                 return Err(MlrcError::new(
                     ErrorCode::Config,
-                    "auth.account only exists per fork; pass --instance <name>",
+                    "auth.account only exists per instance; pass --instance <name>",
                 ))
             }
             other => return Err(unknown_key(other)),
@@ -791,7 +791,7 @@ pub fn canonical(key: &str) -> MlrcResult<&'static str> {
     let key = key.trim();
     match KEYS.iter().find(|known| **known == key) {
         Some(known) => Ok(known),
-        // The account key only exists in a fork's layer, but it is still a key a user
+        // The account key only exists in a instance's layer, but it is still a key a user
         // types, so it survives canonicalisation and is refused later with a message
         // that says where it lives.
         None if key == "auth.account" => Ok("auth.account"),
@@ -884,7 +884,10 @@ mod tests {
         assert!(canonical("gameLanguage").is_err());
         assert!(canonical("mirror").is_err());
         assert!(canonical(" xmx ").is_err());
-        assert_eq!(canonical("auth.account").expect("fork key"), "auth.account");
+        assert_eq!(
+            canonical("auth.account").expect("instance key"),
+            "auth.account"
+        );
     }
 
     #[test]
@@ -926,39 +929,48 @@ api_key = "secret"
     }
 
     #[test]
-    fn a_fork_folds_onto_the_global_layer() {
+    fn an_instance_folds_onto_the_global_layer() {
         let mut global = Config::default();
         global.java.xmx = "2G".to_string();
         global.java.custom = false;
         global.launch.brand = "Global".to_string();
 
-        let mut fork = ForkConfig::default();
-        fork.java.set_key("java.xmx", "6G").expect("xmx");
-        fork.java.set_key("java.custom", "true").expect("custom");
-        fork.auth.set_key("auth.account", "main").expect("account");
+        let mut instance = InstanceConfig::default();
+        instance.java.set_key("java.xmx", "6G").expect("xmx");
+        instance
+            .java
+            .set_key("java.custom", "true")
+            .expect("custom");
+        instance
+            .auth
+            .set_key("auth.account", "main")
+            .expect("account");
 
-        let effective = fork.apply(&global);
+        let effective = instance.apply(&global);
         assert_eq!(effective.java.xmx, "6G");
         assert!(effective.java.custom);
         assert_eq!(effective.launch.brand, "Global");
         assert_eq!(effective.account, "main");
 
-        // A fresh fork inherits everything, including an empty account label.
-        let inherited = ForkConfig::default().apply(&global);
+        // A fresh instance inherits everything, including an empty account label.
+        let inherited = InstanceConfig::default().apply(&global);
         assert_eq!(inherited.java.xmx, "2G");
         assert_eq!(inherited.account, "");
     }
 
     #[test]
-    fn a_fork_layer_owns_its_keys() {
+    fn an_instance_layer_owns_its_keys() {
         let mut layer = LaunchConfig::default();
         assert_eq!(layer.overridden("launch.brand"), None);
 
-        layer.set_key("launch.brand", "Fork").expect("brand");
+        layer.set_key("launch.brand", "Instance").expect("brand");
         layer
             .set_key("launch.jvm_args", "-Da=1 -Db=2")
             .expect("jvm");
-        assert_eq!(layer.overridden("launch.brand").as_deref(), Some("Fork"));
+        assert_eq!(
+            layer.overridden("launch.brand").as_deref(),
+            Some("Instance")
+        );
         assert_eq!(
             layer.overridden("launch.jvm_args").as_deref(),
             Some("-Da=1 -Db=2")
@@ -1012,14 +1024,16 @@ api_key = "secret"
     }
 
     #[test]
-    fn a_fork_only_key_is_refused_globally() {
+    fn an_instance_only_key_is_refused_globally() {
         let mut config = Config::default();
         assert!(config.get("auth.account").is_err());
         assert!(config.set("auth.account", "main").is_err());
 
-        let mut fork = ForkConfig::default();
-        fork.set_key("auth.account", "main").expect("per fork");
-        assert_eq!(fork.auth.account, "main");
+        let mut instance = InstanceConfig::default();
+        instance
+            .set_key("auth.account", "main")
+            .expect("per instance");
+        assert_eq!(instance.auth.account, "main");
     }
 
     #[test]

@@ -27,7 +27,7 @@ crates/mlrc-core/src/
   port/       base directory, config, per-version state
   events.rs   Event enum + EventSink trait
   install.rs  the install pipeline
-  instance.rs forks
+  instance.rs instances
   doctor.rs   the health checks
 
 crates/mlrc-cli/src/
@@ -115,7 +115,7 @@ libraries rely on.
 
 Merging rewrites the pointer to whatever the parent inherited from, never to the parent
 itself, or resolution never terminates. The merged document is what gets cached, and
-what `mod` reads to learn the platform: a fork's id says nothing about its loader.
+what `mod` reads to learn the platform: an instance's id says nothing about its loader.
 
 ---
 

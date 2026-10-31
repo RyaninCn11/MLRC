@@ -1,8 +1,8 @@
-//! Forks: a version that inherits another one and owns its game directory.
+//! Instances: a version that inherits another one and owns its game directory.
 //!
 //! This is the model the launcher we imitate uses instead of separate instances. Every
 //! version already has its own directory (`versions/<id>/` doubles as the game
-//! directory), so "one instance per mod set" becomes "one version per mod set": a fork
+//! directory), so "one instance per mod set" becomes "one version per mod set": a instance
 //! is a thin version document with `inheritsFrom`, plus a client jar hardlinked from
 //! its parent. Removing it removes everything it owned.
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 use crate::meta::version::VersionJson;
-use crate::port::config::ForkConfig;
+use crate::port::config::InstanceConfig;
 use crate::port::state::{self, InstalledState};
 use crate::port::DataRoot;
 
@@ -20,17 +20,17 @@ pub const FILE_NAME: &str = "instance.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instance {
-    /// The version id of the fork, and its directory name.
+    /// The version id of the instance, and its directory name.
     pub name: String,
     /// The version it inherits from.
     pub version: String,
-    /// Heap used to live here; it moved to the fork's `java.xmx`, and this field exists
+    /// Heap used to live here; it moved to the instance's `java.xmx`, and this field exists
     /// only so an `instance.json` written by an earlier version still loads.
     #[serde(default, skip_serializing)]
     pub memory: String,
-    /// Everything this fork overrides; an empty field inherits `config.toml`.
+    /// Everything this instance overrides; an empty field inherits `config.toml`.
     #[serde(flatten)]
-    pub fork: ForkConfig,
+    pub overrides: InstanceConfig,
 }
 
 impl Instance {
@@ -65,11 +65,11 @@ impl Instance {
         root: &DataRoot,
         name: &str,
         version: &str,
-        fork: ForkConfig,
+        overrides: InstanceConfig,
     ) -> MlrcResult<Self> {
         Self::validate_name(name)?;
 
-        // A fork holds no files of its own, so the parent has to be installed.
+        // A instance holds no files of its own, so the parent has to be installed.
         let parent = InstalledState::read(&state_path(root, version))?
             .filter(|state| state.complete)
             .ok_or_else(|| {
@@ -96,7 +96,7 @@ impl Instance {
         VersionJson::store_cached(root, name, document.as_bytes())?;
 
         // The client jar is shared by hardlink, so the classpath builder needs no
-        // special case for forks. A filesystem without hardlinks falls back to a copy.
+        // special case for instances. A filesystem without hardlinks falls back to a copy.
         let parent_jar = root.version_dir(version).join(format!("{version}.jar"));
         let jar = dir.join(format!("{name}.jar"));
         if !jar.exists() && parent_jar.is_file() && std::fs::hard_link(&parent_jar, &jar).is_err() {
@@ -107,7 +107,7 @@ impl Instance {
             name: name.to_string(),
             version: version.to_string(),
             memory: String::new(),
-            fork,
+            overrides,
         };
 
         std::fs::create_dir_all(root.state_dir(name))?;
@@ -155,10 +155,10 @@ impl Instance {
                         format!("invalid {}: {err}", path.display()),
                     )
                 })?;
-                // An older file kept the heap in `memory`; move it to the fork's layer.
-                if instance.fork.java.xmx.is_empty() && !instance.memory.trim().is_empty() {
+                // An older file kept the heap in `memory`; move it to the instance's layer.
+                if instance.overrides.java.xmx.is_empty() && !instance.memory.trim().is_empty() {
                     if let Ok(value) = crate::launch::memory::normalize(&instance.memory) {
-                        instance.fork.java.xmx = value;
+                        instance.overrides.java.xmx = value;
                     }
                 }
                 Ok(Some(instance))
@@ -193,7 +193,7 @@ impl Instance {
         Ok(out)
     }
 
-    /// Removes the fork's version directory, which is everything it owned.
+    /// Removes the instance's version directory, which is everything it owned.
     pub fn remove(root: &DataRoot, name: &str) -> MlrcResult<bool> {
         Self::validate_name(name)?;
 

@@ -1,6 +1,6 @@
 //! Named accounts: one `MLRC/accounts.json`, one entry per login.
 //!
-//! A fork picks one by label; the configuration names the default for everything else.
+//! A instance picks one by label; the configuration names the default for everything else.
 //! The file that used to hold a single session (`auth.json`) is migrated on first read
 //! and then removed, so an upgraded installation keeps its account without being asked.
 
@@ -17,7 +17,7 @@ pub const FILE_NAME: &str = "accounts.json";
 #[serde(default)]
 pub struct Accounts {
     pub schema: u32,
-    /// Label a launch uses when neither the fork nor the configuration names one.
+    /// Label a launch uses when neither the instance nor the configuration names one.
     pub default: String,
     pub accounts: Vec<Account>,
 }

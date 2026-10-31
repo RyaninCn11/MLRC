@@ -141,7 +141,7 @@ pub enum Command {
         command: PackCommand,
     },
 
-    /// Manage forks: versions with their own worlds and mods
+    /// Manage instances: versions with their own worlds and mods
     Instance {
         #[command(subcommand)]
         command: InstanceCommand,
@@ -385,7 +385,7 @@ pub enum AuthCommand {
     },
     /// Show the account a launch would use
     Status {
-        /// Show which account this fork uses, and where the choice comes from
+        /// Show which account this instance uses, and where the choice comes from
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
     },
@@ -454,7 +454,7 @@ pub enum ConfigCommand {
     /// Print one key
     Get {
         key: String,
-        /// Read the value a fork actually uses, and where it comes from
+        /// Read the value a instance actually uses, and where it comes from
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
     },
@@ -465,13 +465,13 @@ pub enum ConfigCommand {
         /// launch.jvm_args -Xmx4G` has to work.
         #[arg(allow_hyphen_values = true)]
         value: String,
-        /// Write the key into this fork instead of the global file
+        /// Write the key into this instance instead of the global file
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
     },
     /// Print every known key
     List {
-        /// Print the values a fork actually uses, and where each comes from
+        /// Print the values a instance actually uses, and where each comes from
         #[arg(long, value_name = "NAME")]
         instance: Option<String>,
     },

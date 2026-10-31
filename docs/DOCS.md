@@ -58,7 +58,7 @@ executable. Two folders, split by who reads them.
 |   |-- libraries/<maven path>         one tree, shared by every version
 |   `-- versions/<id>/
 |       |-- <id>.json                  the version document, standard location
-|       |-- <id>.jar                   client jar; a fork hardlinks its parent's
+|       |-- <id>.jar                   client jar; an instance hardlinks its parent's
 |       |-- <id>-natives/{java,jna,lwjgl,netty}
 |       |-- MLRC/{installed.json, objects.txt, instance.json}
 |       |-- saves/ mods/ resourcepacks/ config/ logs/
@@ -91,30 +91,30 @@ Notes:
 `MLRC/config.toml`, every key in one place. `mlrc config get|set|list` reads and
 writes it; `set` validates before writing.
 
-Two layers. A fork's `instance.json` may override `java.*` and `launch.*` field by field,
+Two layers. The instance file, `instance.json`, may override `java.*` and `launch.*` field by field,
 plus `auth.account`; what it leaves empty comes from the global file. Everything else is
 global by definition, because it is not a property of a version: which mirror the machine
 can reach, which key pays for CurseForge.
 
 ```
-mlrc config set java.xmx 6G --instance survival             # that fork only
-mlrc config set launch.brand "My Pack" --instance survival  # that fork only
+mlrc config set java.xmx 6G --instance survival             # that instance only
+mlrc config set launch.brand "My Pack" --instance survival  # that instance only
 mlrc config get java.xmx --instance survival                # value + where it came from
-mlrc config list --instance survival                        # every key, marked [fork] or [global]
+mlrc config list --instance survival                        # every key, marked [instance] or [global]
 ```
 
 `config set` refuses a global key with `--instance` instead of writing it somewhere it
 would be ignored, and `config list` marks each key with its source so "which layer wins"
 is visible rather than inferred.
 
-A fork's heap has one source: `java.xmx`. `mlrc instance create --memory 4G` writes that
+An instance's heap has one source: `java.xmx`. `mlrc instance create --memory 4G` writes that
 same key, so the two cannot disagree.
 
 A key is always `section.name` and never has a second spelling: `gameLanguage`, `xmx`
 and `mirror` were accepted once and are not any more, because two spellings for one
 setting is how a document drifts. Typing one now fails with the key that was meant.
 
-| Key | Values | Meaning | Per fork |
+| Key | Values | Meaning | Per instance |
 |---|---|---|---|
 | `java.custom` | `false` (default), `true` | `true` allows a host JVM when no managed runtime matches | yes |
 | `java.path` | path, empty | explicit binary; only with `java.custom = true` | yes |
@@ -134,7 +134,7 @@ setting is how a document drifts. Typing one now fails with the key that was mea
 | `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name | no |
 | `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode | no |
 | `auth.nide8_jar` | path, empty | where `nide8auth.jar` lives; empty means `MLRC/injector/nide8auth.jar`, downloaded when missing | no |
-| `auth.account` | account label, empty | which stored account this fork uses; empty means the default | **only** |
+| `auth.account` | account label, empty | which stored account this instance uses; empty means the default | **only** |
 
 Environment variables, which win over the file: `MLRC_DATA_DIR` (the base directory)
 and `MLRC_CURSEFORGE_KEY` (the API key, so it need not be written to disk).
@@ -157,7 +157,7 @@ where the speedup comes from; every file falls back to the official URL on its o
 run does not probe again. BMCLAPI's terms require naming the source, so a run through
 it prints it and emits a `source` event.
 
-**`java.xmx` is a default, not a decision.** `--memory`, a fork's own value and the
+**`java.xmx` is a default, not a decision.** `--memory`, an instance's own value and the
 config are tried in that order, so a single heavy modpack does not force every version
 to carry its heap.
 
@@ -222,7 +222,7 @@ exactly; otherwise the gate.
 
 Two mechanisms behind one command: Fabric and Quilt publish a version document, while
 Forge and NeoForge are installers that patch the client themselves. In both cases the
-result is an ordinary version, so `launch`, `mod` and `fork` need no special cases.
+result is an ordinary version, so `launch`, `mod` and `instance` need no special cases.
 The mechanics are in [DEVELOPMENT.md](DEVELOPMENT.md#7-loaders).
 
 ### 4.4 Listing what can be installed
@@ -318,11 +318,11 @@ before launch rather than left to a failed start. A path containing `=` is passe
 relative to the game directory, because Java splits the agent argument on the first `=`.
 
 **Several accounts.** `MLRC/accounts.json` holds one entry per login, keyed by a label -
-the profile name by default, or `--name`. A launch picks the one its fork names in
-`auth.account`; a fork that names none gets the default, which `mlrc auth use` sets and
+the profile name by default, or `--name`. A launch picks the one its instance names in
+`auth.account`; an instance that names none gets the default, which `mlrc auth use` sets and
 which starts as the first account stored. With exactly one account and no default, that
 account is used, because a single login needs no configuration. A label costs one file and
-buys the thing forks are for: different servers, different names, one installation.
+buys the thing instances are for: different servers, different names, one installation.
 
 The default is not a configuration key. It belongs to the account list, not to a version,
 and `config set` says so when asked for it without `--instance`.
@@ -343,12 +343,12 @@ output: the session's `Debug` implementation redacts it, so a log line, a panic 
 or a `{:?}` in an error cannot leak it. `--accessToken` is masked in `launch --dry-run`
 and in verbose logs.
 
-### 5.2 Game directory and forks
+### 5.2 Game directory and instances
 
 The game directory is the version directory, which is the isolation model of the
 launcher this project imitates: one version, one set of worlds.
 
-A second set for the same Minecraft version is a **fork**: a two-line document with
+A second set for the same Minecraft version is a **instance**: a two-line document with
 `inheritsFrom`, a client jar hardlinked from its parent, and `MLRC/instance.json`.
 Nothing is copied, and the library tree and assets stay shared.
 
@@ -357,14 +357,14 @@ mlrc instance create survival --version 1.21.1
 mlrc launch --instance survival
 ```
 
-Because a fork is a real version id, `list`, `uninstall`, `mod` and `launch <id>`
+Because an instance is a real version id, `list`, `uninstall`, `mod` and `launch <id>`
 accept it without knowing what it is.
 
 ### 5.3 Launch settings
 
-Five settings shape a launch, and each exists globally and per fork: `launch.brand`,
-`launch.jvm_args`, `launch.game_args`, `launch.pre_launch`, plus the heap. A fork's file
-carries the same struct, and an empty field inherits the global one, so a fork only
+Five settings shape a launch, and each exists globally and per instance: `launch.brand`,
+`launch.jvm_args`, `launch.game_args`, `launch.pre_launch`, plus the heap. An instance's file
+carries the same struct, and an empty field inherits the global one, so an instance only
 records what it actually changes.
 
 Arguments are appended after the document's own, which is what makes `--demo` work
@@ -512,7 +512,7 @@ stream.
 
 ## 8. Decisions worth remembering
 
-- **The version directory is the game directory.** Isolation by construction; a fork is
+- **The version directory is the game directory.** Isolation by construction; an instance is
   the answer to "another world set", because that is a new version id.
 - **Managed Java, keyed by major.** The host JDK is ignored by default; one runtime per
   major serves every version that needs it.

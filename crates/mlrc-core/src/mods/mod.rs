@@ -43,7 +43,7 @@ pub fn loader_of(id: &str) -> Option<&'static str> {
 
 /// Game version plus loader for an installed version.
 ///
-/// Follows `inheritsFrom` rather than parsing the id: a fork's id says nothing about
+/// Follows `inheritsFrom` rather than parsing the id: a instance's id says nothing about
 /// its loader, and `neoforge-21.1.265` does not contain the Minecraft version at all.
 pub fn platform(root: &DataRoot, id: &str) -> MlrcResult<Platform> {
     let (mc, loader) = resolve(root, id)?;

@@ -392,7 +392,7 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
         }
         AuthCommand::Status { instance } => {
             let accounts = auth::Accounts::load(&root)?;
-            let fork = match instance {
+            let instance = match instance {
                 Some(name) => Some(Instance::load(&root, name)?.ok_or_else(|| {
                     MlrcError::new(ErrorCode::Usage, format!("no such instance: {name}"))
                         .with("instance", name.clone())
@@ -430,8 +430,8 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
 
             // What a launch would do, and why: the mode answers "how does it decide who
             // I am", and the account block is the stored half of that answer.
-            if let Some(instance) = &fork {
-                let wanted = instance.fork.auth.account.trim();
+            if let Some(instance) = &instance {
+                let wanted = instance.overrides.auth.account.trim();
                 match accounts.resolve(wanted) {
                     Ok(account) => out.human(format!(
                         "instance: {} uses {}",
@@ -579,9 +579,9 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     let path = root.config_path();
 
-    // A fork stores the launch.* keys and nothing else, so a command that names one
+    // A instance stores the launch.* keys and nothing else, so a command that names one
     // writes there; everything else is global by definition.
-    let fork = match command {
+    let overrides = match command {
         ConfigCommand::List { instance }
         | ConfigCommand::Get { instance, .. }
         | ConfigCommand::Set { instance, .. } => match instance {
@@ -603,31 +603,31 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
         ConfigCommand::List { .. } => {
             let cfg = Config::load(&path)?;
             if !out.is_json() {
-                match &fork {
+                match &overrides {
                     Some(instance) => out.human(format!(
-                        "# fork {} (instance.json); empty means the global value",
+                        "# instance {} (instance.json); empty means the global value",
                         instance.name
                     )),
                     None => out.human(format!("# global: {}", path.display())),
                 }
-                out.human("# a fork may override the launch.* keys in its own instance.json");
+                out.human("# a instance may override the launch.* keys in its own instance.json");
             }
 
             let mut keys: Vec<&str> = CONFIG_KEYS.to_vec();
-            if fork.is_some() {
+            if overrides.is_some() {
                 keys.push("auth.account");
             }
 
             for key in keys {
-                let global = if config::is_fork_only(key) {
+                let global = if config::is_instance_only(key) {
                     String::new()
                 } else {
                     cfg.get(key)?
                 };
-                let (value, source) = match &fork {
-                    Some(instance) if config::is_fork_key(key) => {
-                        match instance.fork.overridden(key) {
-                            Some(value) => (value, "fork"),
+                let (value, source) = match &overrides {
+                    Some(instance) if config::is_instance_key(key) => {
+                        match instance.overrides.overridden(key) {
+                            Some(value) => (value, "instance"),
                             None => (global, "global"),
                         }
                     }
@@ -643,8 +643,8 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
                         "source": source,
                     }));
                 } else {
-                    let scope = match (&fork, source) {
-                        (None, _) if config::is_fork_key(key) => String::new(),
+                    let scope = match (&overrides, source) {
+                        (None, _) if config::is_instance_key(key) => String::new(),
                         (None, _) => " (global only)".to_string(),
                         (Some(_), source) => format!(" [{source}]"),
                     };
@@ -656,23 +656,25 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
         ConfigCommand::Get { key, .. } => {
             let cfg = Config::load(&path)?;
             let canonical = config::canonical(key)?;
-            if fork.is_none() && config::is_fork_only(canonical) {
+            if overrides.is_none() && config::is_instance_only(canonical) {
                 return Err(MlrcError::new(
                     ErrorCode::Usage,
-                    format!("{canonical} only exists per fork; pass --instance <name>"),
+                    format!("{canonical} only exists per instance; pass --instance <name>"),
                 )
                 .with("key", canonical.to_string()));
             }
-            let global = if config::is_fork_only(canonical) {
+            let global = if config::is_instance_only(canonical) {
                 String::new()
             } else {
                 cfg.get(key)?
             };
-            let (value, source) = match &fork {
-                Some(instance) if config::is_fork_key(key) => match instance.fork.overridden(key) {
-                    Some(value) => (value, "fork"),
-                    None => (global, "global"),
-                },
+            let (value, source) = match &overrides {
+                Some(instance) if config::is_instance_key(key) => {
+                    match instance.overrides.overridden(key) {
+                        Some(value) => (value, "instance"),
+                        None => (global, "global"),
+                    }
+                }
                 _ => (global, "global"),
             };
 
@@ -686,7 +688,7 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
                 }));
             } else {
                 out.human(value);
-                if fork.is_some() && key.starts_with("launch.") {
+                if overrides.is_some() && key.starts_with("launch.") {
                     out.human(format!("# from {source}"));
                 }
             }
@@ -695,26 +697,26 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
         ConfigCommand::Set { key, value, .. } => {
             let canonical = config::canonical(key)?;
 
-            if let Some(mut instance) = fork {
-                if !config::is_fork_key(canonical) {
+            if let Some(mut instance) = overrides {
+                if !config::is_instance_key(canonical) {
                     return Err(MlrcError::new(
                         ErrorCode::Usage,
                         format!(
-                            "{canonical} is global; only the launch.* keys can be set per fork"
+                            "{canonical} is global; only the launch.* keys can be set per instance"
                         ),
                     )
                     .with("key", canonical.to_string()));
                 }
-                instance.fork.set_key(canonical, value)?;
+                instance.overrides.set_key(canonical, value)?;
                 instance.save(&root)?;
-                let stored = instance.fork.get_key(canonical)?;
+                let stored = instance.overrides.get_key(canonical)?;
                 out.human(format!("{}: {key} = {stored}", instance.name));
                 out.json_event(json!({
                     "schema": 1,
                     "event": "config",
                     "key": key,
                     "value": stored,
-                    "source": "fork",
+                    "source": "instance",
                     "instance": instance.name,
                 }));
                 return Ok(());
@@ -1442,18 +1444,18 @@ async fn cmd_launch(
         None => None,
     };
 
-    // Which layers decide: a fork may name its own account, Java settings and launch
+    // Which layers decide: a instance may name its own account, Java settings and launch
     // options; everything it leaves empty comes from the global file.
-    let fork_layers = match &instance {
-        Some(instance) => instance.fork.clone(),
-        None => config::ForkConfig::default(),
+    let instance_layers = match &instance {
+        Some(instance) => instance.overrides.clone(),
+        None => config::InstanceConfig::default(),
     };
-    let effective = fork_layers.apply(&cfg);
+    let effective = instance_layers.apply(&cfg);
 
     let id = match version {
         Some(id) => id.to_string(),
         None => match &instance {
-            // A fork is itself a version id; its document carries the inheritance.
+            // A instance is itself a version id; its document carries the inheritance.
             Some(instance) => instance.name.clone(),
             None if !cfg.general.default_version.is_empty() => cfg.general.default_version.clone(),
             None => {
@@ -1477,7 +1479,7 @@ async fn cmd_launch(
         Some(value) => Some(launch::memory::normalize(value)?),
         None => instance
             .as_ref()
-            .map(|instance| instance.fork.java.xmx.clone())
+            .map(|instance| instance.overrides.java.xmx.clone())
             .filter(|value| !value.is_empty())
             .or_else(|| Some(effective.java.xmx.clone()).filter(|value| !value.is_empty())),
     };
@@ -1652,7 +1654,7 @@ async fn cmd_launch(
         }
     };
 
-    // Global launch settings, then the fork's own values over them, then whatever the
+    // Global launch settings, then the instance's own values over them, then whatever the
     // command line added on top.
     let launch_cfg = effective.launch.clone();
     let mut extra_game_args = launch_cfg.game_args.clone();
@@ -1952,7 +1954,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
             pre_launch,
             brand,
         } => {
-            // A fork holds only a document and a hardlinked jar; the version it points
+            // A instance holds only a document and a hardlinked jar; the version it points
             // at has to exist already.
             match InstalledState::load(&root, version)? {
                 Some(state) if state.complete => {}
@@ -1978,7 +1980,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 .with("instance", name.clone()));
             }
 
-            let mut fork = config::ForkConfig {
+            let mut overrides = config::InstanceConfig {
                 launch: LaunchConfig {
                     brand: brand.clone().unwrap_or_default(),
                     jvm_args: jvm_args.to_vec(),
@@ -1986,13 +1988,13 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                     pre_launch: pre_launch.clone().unwrap_or_default(),
                     game_language: String::new(),
                 },
-                ..config::ForkConfig::default()
+                ..config::InstanceConfig::default()
             };
             // `--memory` writes the same key `config set java.xmx --instance` writes.
             if let Some(memory) = memory {
-                fork.java.set_key("java.xmx", memory)?;
+                overrides.java.set_key("java.xmx", memory)?;
             }
-            let instance = Instance::create(&root, name, version, fork)?;
+            let instance = Instance::create(&root, name, version, overrides)?;
             let game_dir = Instance::game_dir(&root, &instance.name);
 
             out.human(format!(
@@ -2188,7 +2190,7 @@ async fn cmd_pack(cli: &Cli, out: &Out, command: &PackCommand) -> MlrcResult<()>
             let kind = pack_kind(kind)?;
             let instance = load_instance(&root, instance.as_deref())?;
             // A pack has no loader, so `--mc` alone is enough; otherwise the game
-            // version comes from the version or fork being targeted.
+            // version comes from the version or instance being targeted.
             let game = match mc {
                 Some(value) => value.clone(),
                 None => {
@@ -2476,7 +2478,7 @@ async fn cmd_pack(cli: &Cli, out: &Out, command: &PackCommand) -> MlrcResult<()>
     }
 }
 
-/// The version a pack command acts on: explicit, from a fork, or the default.
+/// The version a pack command acts on: explicit, from a instance, or the default.
 ///
 /// Packs do not need a loader, so this returns the game directory and the id rather
 /// than a `Platform`: `mlrc pack install` has to work on a vanilla version.

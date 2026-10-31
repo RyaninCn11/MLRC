@@ -15,7 +15,7 @@ other tools can reuse the engine without touching it.
 - [x] Managed Java runtimes, one per major, so `JAVA_HOME` never breaks a version
 - [x] Portable: one folder holds everything, and nothing is written outside it
 - [x] Fabric, Quilt, Forge and NeoForge, installed through the same command
-- [x] Forks: a copy of a version that keeps its own worlds and mods
+- [x] Instances: a copy of a version that keeps its own worlds and mods
 - [x] Mods and modpacks from Modrinth and CurseForge
 - [x] Offline play under any name, or Yggdrasil login for third-party servers
 - [x] Machine-readable output: exit codes, error codes, NDJSON events
@@ -71,7 +71,7 @@ mlrc install 1.21.1 --loader neoforge     # or forge
 mlrc launch fabric-loader-0.20.1-1.21.1
 ```
 
-**A second world set.** Every version has its own folder, so a fork is what you want:
+**A second world set.** Every version has its own folder, so an instance is what you want:
 
 ```bash
 mlrc instance create survival --version fabric-loader-0.20.1-1.21.1 --memory 4G
@@ -140,7 +140,7 @@ mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 ```
 
 **Launch settings.** JVM flags, game arguments, a command to run first, and the brand
-text the game shows in its corner - globally or per fork. `${...}` markers work here
+text the game shows in its corner - globally or per instance. `${...}` markers work here
 exactly as they do in a version document:
 
 ```bash
@@ -149,8 +149,8 @@ mlrc config set launch.game_args "--demo"
 mlrc config set launch.pre_launch "echo starting"
 mlrc config set launch.brand "My Launcher"
 mlrc instance create demo --version 1.21.1 --game-arg --demo --brand Demo
-mlrc config set launch.jvm_args "-XX:+UseG1GC" --instance demo   # that fork only
-mlrc config list --instance demo                                  # [fork] or [global], per key
+mlrc config set launch.jvm_args "-XX:+UseG1GC" --instance demo   # that instance only
+mlrc config list --instance demo                                  # [instance] or [global], per key
 ```
 ### Commands
 
@@ -161,13 +161,13 @@ mlrc config list --instance demo                                  # [fork] or [g
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
-| `mlrc instance create \| list \| remove` | Forks: a version with its own worlds and mods, sharing the parent's files (`--memory`, `--jvm-arg`, `--game-arg`, `--pre-launch`, `--brand`) |
+| `mlrc instance create \| list \| remove` | Instances: a version with its own worlds and mods, sharing the parent's files (`--memory`, `--jvm-arg`, `--game-arg`, `--pre-launch`, `--brand`) |
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies, `--dry-run` shows them first |
 | `mlrc pack search \| install \| list \| remove` | Resource packs, shader packs and data packs; the kind is read from Modrinth, `--world` puts a data pack inside one world |
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc auth login \| logout \| status` | Sign in to a Yggdrasil server, forget it, or show it |
-| `mlrc config get \| set \| list` | Read or write `config.toml`; `--instance <name>` reads or writes a fork's layer (`launch.*` only) |
+| `mlrc config get \| set \| list` | Read or write `config.toml`; `--instance <name>` reads or writes an instance's layer (`launch.*` only) |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |
 | `mlrc doctor` | Check the data directory, network, runtimes and versions |
 
@@ -182,7 +182,7 @@ Global flags: `--data-dir`, `--json`, `--quiet`, `-v`, `--mirror`.
 custom = false      # true: honour java.path, JAVA_HOME and PATH
 path = ""           # explicit java binary
 xms = ""            # initial heap; empty leaves the JVM default
-xmx = "2G"          # maximum heap; --memory and a fork's own value override it
+xmx = "2G"          # maximum heap; --memory and an instance's own value override it
 
 [general]
 default_version = ""
@@ -202,7 +202,7 @@ server = ""              # Yggdrasil API root; empty means offline only
 player_name = "Player"   # offline name
 ```
 
-A fork may override any of the `launch` values; an empty field inherits the global one.
+An instance may override any of the `launch` values; an empty field inherits the global one.
 
 Exit codes are stable: `0` success, `2` usage, `3` network, `4` authentication,
 `5` Java, `7` portable directory not writable, `8` version not installed. `--json`
