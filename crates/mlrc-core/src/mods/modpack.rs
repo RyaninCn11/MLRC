@@ -428,7 +428,6 @@ async fn import_modrinth(
         sink.emit(Event::FileFinished {
             path: relative.display().to_string(),
             ok: true,
-            cached: false,
         });
 
         files += 1;
@@ -739,7 +738,6 @@ async fn import_curseforge(
             sink.emit(Event::FileFinished {
                 path: resolved.file_name.clone(),
                 ok: true,
-                cached: false,
             });
 
             bytes_total += bytes.len() as u64;

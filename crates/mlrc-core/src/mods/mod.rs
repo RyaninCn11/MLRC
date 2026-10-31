@@ -309,7 +309,6 @@ async fn install_curseforge(
             sink.emit(Event::FileFinished {
                 path: file.file_name.clone(),
                 ok: true,
-                cached: false,
             });
 
             installed.push(InstalledMod {
@@ -459,7 +458,6 @@ pub async fn install(
         sink.emit(Event::FileFinished {
             path: file.filename.clone(),
             ok: true,
-            cached: false,
         });
 
         installed.push(InstalledMod {
@@ -694,7 +692,6 @@ pub async fn update(
         sink.emit(Event::FileFinished {
             path: new_name.clone(),
             ok: true,
-            cached: false,
         });
 
         manifest.upsert(Entry {

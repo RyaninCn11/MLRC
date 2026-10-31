@@ -25,8 +25,6 @@ pub enum Event {
     FileFinished {
         path: String,
         ok: bool,
-        /// Already in the object store: materialized instead of downloaded.
-        cached: bool,
     },
     /// The version needs a Java runtime that is not installed yet.
     JavaRequired {

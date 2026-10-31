@@ -36,7 +36,7 @@ use crate::cli::{
     AuthCommand, CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
     JavaMode as CliJavaMode, MirrorArg, ModCommand,
 };
-use crate::progress::ProgressSink;
+use crate::progress::Sink;
 use crate::render::Out;
 
 pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
@@ -719,8 +719,7 @@ async fn cmd_install(
         host_path: cfg.java.path.clone(),
     };
 
-    let live = !cli.json && !cli.quiet;
-    let sink = ProgressSink::new(live);
+    let sink = Sink::for_run(cli.json, cli.quiet);
 
     let state = match install_once(
         &client,
@@ -751,14 +750,18 @@ async fn cmd_install(
                 .and_then(|value| value.as_u64())
                 .unwrap_or(0);
 
-            // Machine callers get a decision request, never a prompt.
+            // Machine callers get a decision request, never a prompt. In JSON mode the
+            // sink has already emitted `java_required` (with `download_bytes`), so only
+            // the non-JSON machine case needs a line here.
             if cli.json || !std::io::stdin().is_terminal() {
-                out.json_event(json!({
-                    "schema": 1,
-                    "event": "java_required",
-                    "component": component,
-                    "major": major,
-                }));
+                if !cli.json {
+                    out.json_event(json!({
+                        "schema": 1,
+                        "event": "java_required",
+                        "component": component,
+                        "major": major,
+                    }));
+                }
                 return Err(err);
             }
 
@@ -852,7 +855,7 @@ async fn install_once(
     loader: Option<&str>,
     loader_version: Option<&str>,
     options: &InstallOptions,
-    sink: &ProgressSink,
+    sink: &Sink,
 ) -> MlrcResult<InstalledState> {
     match loader {
         Some(name) if Flavour::parse(name).is_some() => {
@@ -1513,7 +1516,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 proxy: cfg.general.proxy.clone(),
             };
 
-            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let sink = Sink::for_run(cli.json, cli.quiet);
             let summary = mods::modpack::import(
                 &client,
                 &root,
@@ -1756,7 +1759,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 return Ok(());
             }
 
-            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let sink = Sink::for_run(cli.json, cli.quiet);
             let mut total = 0u64;
             let mut names = Vec::new();
 
@@ -1905,7 +1908,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             )?;
             let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
-            let sink = ProgressSink::new(!cli.json && !cli.quiet);
+            let sink = Sink::for_run(cli.json, cli.quiet);
             let report = mods::update(
                 &client,
                 &game_dir,
@@ -2288,8 +2291,7 @@ async fn install_java(cli: &Cli, out: &Out, root: &DataRoot, target: &str) -> Ml
         resolved.major, resolved.component
     ));
 
-    let live = !cli.json && !cli.quiet;
-    let sink = ProgressSink::new(live);
+    let sink = Sink::for_run(cli.json, cli.quiet);
     let installation = runtime::install(&client, root, &resolved, 8, &sink).await?;
     sink.finish();
 

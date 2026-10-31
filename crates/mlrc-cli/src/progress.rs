@@ -70,10 +70,7 @@ impl EventSink for ProgressSink {
                     *guard = Some(bar);
                 }
             }
-            Event::FileFinished { cached, .. } => {
-                if cached {
-                    return;
-                }
+            Event::FileFinished { .. } => {
                 if let Some(bar) = self.bar() {
                     bar.inc(1);
                 }
@@ -85,6 +82,42 @@ impl EventSink for ProgressSink {
                 self.print(&message);
             }
             _ => {}
+        }
+    }
+}
+/// The sink a command runs with: a progress bar for a terminal, NDJSON for a machine,
+/// nothing at all when quiet.
+pub enum Sink {
+    Human(ProgressSink),
+    Json(crate::json_sink::JsonSink),
+    Silent,
+}
+
+impl Sink {
+    pub fn for_run(json: bool, quiet: bool) -> Self {
+        if json {
+            Self::Json(crate::json_sink::JsonSink::stdout())
+        } else if quiet {
+            Self::Silent
+        } else {
+            Self::Human(ProgressSink::new(true))
+        }
+    }
+
+    /// Clears the bar, so the caller's own output starts on a clean line.
+    pub fn finish(&self) {
+        if let Self::Human(sink) = self {
+            sink.finish();
+        }
+    }
+}
+
+impl EventSink for Sink {
+    fn emit(&self, event: Event) {
+        match self {
+            Self::Human(sink) => sink.emit(event),
+            Self::Json(sink) => sink.emit(event),
+            Self::Silent => {}
         }
     }
 }

@@ -112,15 +112,13 @@ impl<'a> Downloader<'a> {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| task.url.clone());
 
+        // A file that is already in the store is not announced: the phase counts files
+        // to fetch, and announcing thousands of cache hits would make that count wrong.
+        // `installed` reports how many were reused.
         if !task.sha1.is_empty() && self.store.contains(&task.sha1, task.size) {
             for dest in &task.dests {
                 self.store.materialize(&task.sha1, dest)?;
             }
-            self.sink.emit(Event::FileFinished {
-                path: label,
-                ok: true,
-                cached: true,
-            });
             return Ok(());
         }
 
@@ -180,7 +178,6 @@ impl<'a> Downloader<'a> {
                     self.sink.emit(Event::FileFinished {
                         path: label,
                         ok: true,
-                        cached: false,
                     });
                     return Ok(());
                 }

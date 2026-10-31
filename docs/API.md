@@ -73,7 +73,7 @@ interior mutability. It must not block: the download loop is waiting.
 | `Phase` | `phase`, `total` (optional) | a new stage; `total` counts files, and is absent when unknown |
 | `FileStarted` | `path`, `total_bytes` (optional) | one file begins |
 | `FileProgress` | `path`, `bytes` | reserved: emitted by per-chunk progress, currently unused |
-| `FileFinished` | `path`, `ok`, `cached` | one file is done; `cached` means it was already in the store |
+| `FileFinished` | `path`, `ok` | one file is done |
 | `JavaRequired` | `component`, `major`, `download_bytes` | a decision is needed, see section 4 |
 | `Warning` | `code`, `message` | the run continues; the code is one of section 5 |
 | `Note` | `message` | informational, for a log pane |
@@ -81,7 +81,11 @@ interior mutability. It must not block: the download loop is waiting.
 
 Ordering:
 
-- `Phase` is emitted once per stage, before the files of that stage.
+- `Phase` is emitted once per stage, before the files of that stage. Its `total` counts
+  the files that will be announced, so a progress bar can use it directly.
+- Only files that are actually fetched are announced. A file already in the content
+  store is materialized without events, which keeps `total` honest; `installed` reports
+  how many were reused.
 - Every `FileStarted` for a file is followed by exactly one `FileFinished` for it, even
   when the file fails: a failed file ends the operation with an error, so a front-end
   that keeps a table of in-flight files can drop the entry on either.
@@ -99,9 +103,16 @@ Ordering:
 `--json` writes one JSON object per line on stdout, flushed as it is written. Every line
 carries `"schema": 1`.
 
-The CLI emits **command-level** events: one per outcome, not one per file. Per-file
-progress is the Rust API's job (section 2); a front-end that wants a progress bar should link
-the engine rather than scrape stdout.
+The stream has two layers:
+
+1. **Engine events**, streamed as they happen: `phase`, `file_started`,
+   `file_progress`, `file_finished`, `java_required`, `warning`, `note`. They are the
+   same events section 2 describes, one line each, so a consumer can drive a progress bar
+   without linking the crate.
+2. **One command event**, at the end: `installed`, `launch`, `mods_installed` and so on,
+   or `error`.
+
+`Event::Done` is not part of the stream: it would duplicate the command event.
 
 | `event` | Shape | Emitted by |
 |---|---|---|
@@ -109,7 +120,7 @@ the engine rather than scrape stdout.
 | `error` | `code`, `message`, `context` | any failure; also the last line before exit |
 | `doctor` | `ok`, `failed`, `warned`, `check` list | `doctor`, exactly one line |
 | `java_required` | `component`, `major` | `install` when a decision is needed |
-| `installed` | `id`, `files`, `bytes`, `reused` | `install` |
+| `installed` | `id`, `files`, `bytes`, `reused` | `install`, after the file events |
 | `plan` | the preview: id, kind, main class, files | `install --dry-run`, `mod install --dry-run` |
 | `source` | `mirror`, `url` | any command that downloads through BMCLAPI |
 | `launch` | `argv`, `cwd`, `main_class` | `launch` (`--dry-run` or real) |
@@ -120,8 +131,8 @@ the engine rather than scrape stdout.
 Guarantees:
 
 - stdout carries only NDJSON. Diagnostics, warnings and the progress bar go to stderr.
-- A command ends with exactly one terminal line: `done`, the command's own success
-  event, or `error`.
+- A command ends with exactly one terminal line: the command's own event, or `error`.
+  Everything before it is progress and may be ignored.
 - An `error` line and the exit status carry the same code.
 - **Secrets are masked.** `--accessToken` and similar values are printed as `***` in
   `launch` and in `-v` logs.
@@ -194,3 +205,8 @@ file that is wrong, and a retry is not the answer.
 - Command-line flag names and subcommand shapes.
 - The on-disk layout beyond what section 1 depends on (`DataRoot` owns the rest).
 - Interactive prompts: they exist only in the CLI and only on a terminal.
+
+The one asymmetry left is deliberate: `--json` streams the same events the Rust API
+delivers, but a caller that needs to answer a question *inside* an operation (say, to
+choose a Java runtime in a dialog) still has to re-run with an explicit policy. A
+callback-based API for that is not part of version 1.

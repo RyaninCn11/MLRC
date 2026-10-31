@@ -375,11 +375,16 @@ reserved key is `hint`, printed on its own line because it is advice, not data.
 
 ```json
 {"schema":1,"event":"phase","phase":"download","total":96}
-{"schema":1,"event":"java_required","component":"java-runtime-beta","major":17}
-{"schema":1,"event":"file_finished","path":"1.18.2.jar","ok":true,"cached":false}
-{"schema":1,"event":"done","message":"installed 1.18.2","ok":true}
+{"schema":1,"event":"file_started","path":"1.18.2.jar","total_bytes":1024}
+{"schema":1,"event":"file_finished","path":"1.18.2.jar","ok":true}
+{"schema":1,"event":"installed","id":"1.18.2","files":96,"bytes":1234,"reused":0}
 {"schema":1,"event":"error","code":"E_USAGE","message":"...","context":{"version":"1.21.1"}}
 ```
+
+Two layers: the engine's own events streamed as they happen (the same ones a Rust caller
+receives through the sink), then one command event that says how it ended. A file that
+was already in the content store is materialized without events, so `phase.total` and
+the number of `file_finished` lines agree.
 
 Errors carry the same code the exit status would. `schema` is versioned so a front-end
 can refuse an engine it does not understand.

@@ -411,14 +411,9 @@ async fn the_event_stream_matches_the_documented_contract() {
 
     // Progress is reported per file, and a fresh install never claims a cache hit.
     assert!(
-        events.iter().any(|event| matches!(
-            event,
-            Event::FileFinished {
-                ok: true,
-                cached: false,
-                ..
-            }
-        )),
+        events
+            .iter()
+            .any(|event| matches!(event, Event::FileFinished { ok: true, .. })),
         "expected at least one file_finished"
     );
 
@@ -451,7 +446,6 @@ async fn the_event_stream_matches_the_documented_contract() {
     assert_eq!(finished["event"], "file_finished");
     assert!(finished.get("path").is_some());
     assert!(finished.get("ok").is_some());
-    assert!(finished.get("cached").is_some());
 
     let _ = std::fs::remove_dir_all(dir);
 }

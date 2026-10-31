@@ -31,10 +31,11 @@ crates/mlrc-core/src/
   doctor.rs   the health checks
 
 crates/mlrc-cli/src/
-  cli.rs      clap definitions
-  commands.rs one handler per command
-  render.rs   human output, error formatting, token masking
-  progress.rs indicatif bar
+  cli.rs       clap definitions
+  commands.rs  one handler per command
+  render.rs    human output, error formatting, token masking
+  progress.rs  the sink a command runs with: bar, NDJSON, or nothing;
+               json_sink.rs holds the engine-event to NDJSON mapping
 ```
 
 `mlrc-core` has no clap, no indicatif, no `unsafe`, and never writes to stdout. A
@@ -247,7 +248,7 @@ manifest, and the pack importer.
 |---|---|
 | A config key | `port/config.rs`: `KEYS`, `get`, `set`, `canonical`, then the table in the design notes |
 | An error code | `error.rs`: enum, `as_str`, `exit_code`; the message shape is checked by `tests/error_style.rs` |
-| An event | `events.rs`, plus `mlrc-cli/src/progress.rs` and the NDJSON docs |
+| An event | `events.rs`, the mapping in `mlrc-cli/src/json_sink.rs`, and `docs/API.md` |
 | A CLI command | `mlrc-cli/src/cli.rs` and `commands.rs` |
 | A loader | `loader/` and the `--loader` value list in `cli.rs` |
 | A metadata quirk | `meta/`, and a note in section 2 above |
