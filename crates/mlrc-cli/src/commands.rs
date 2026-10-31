@@ -574,6 +574,13 @@ async fn refresh_session(
     let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
     let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
 
+    // The service publishes the hash of its client component, so this is the one place
+    // a mismatched nide8auth.jar can be caught before the game starts and fails to
+    // authenticate with no explanation.
+    if session.kind == "nide8" {
+        check_nide8_jar(&client, root, cfg, &session, out).await;
+    }
+
     match auth::yggdrasil::validate(&client, &session).await? {
         Some(true) => Ok(session),
         Some(false) => {
@@ -2186,6 +2193,40 @@ fn open_in_browser(url: &str) -> MlrcResult<()> {
     spawned
         .map(|_| ())
         .map_err(|err| MlrcError::new(ErrorCode::Io, err.to_string()))
+}
+/// Compares the local `nide8auth.jar` with the hash the server publishes.
+///
+/// A warning, not an error: a server may have just updated its jar, and refusing to
+/// launch would be worse than telling the user what to fix.
+async fn check_nide8_jar(
+    client: &HttpClient,
+    root: &DataRoot,
+    cfg: &Config,
+    session: &auth::yggdrasil::Session,
+    out: &Out,
+) {
+    let Ok(jar) = nide8_jar(root, cfg) else {
+        return;
+    };
+    let Ok(server) = auth::nide8::discover(client, &session.server_id).await else {
+        return;
+    };
+    if server.jar_sha1.is_empty() {
+        return;
+    }
+    let Ok(bytes) = std::fs::read(&jar) else {
+        return;
+    };
+
+    let actual = mods::sha1_of(&bytes);
+    if actual != server.jar_sha1 {
+        out.human("warning: nide8auth.jar does not match the server's jarHash");
+        out.human(format!("  local:  {actual}"));
+        out.human(format!("  server: {}", server.jar_sha1));
+        out.human(
+            "  replace the jar with the server's current one, or the game may fail to authenticate",
+        );
+    }
 }
 /// The unified pass client jar: configured, or the conventional spot in the data folder.
 ///

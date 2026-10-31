@@ -282,9 +282,11 @@ before logging in.
 The game then needs `-javaagent:nide8auth.jar=<id>` and `-Dnide8auth.client=true`, or it
 talks to Mojang and never joins that server. The jar is the user's: the service
 publishes no download url, so the launcher looks at `auth.nide8_jar`, then
-`MLRC/injector/nide8auth.jar`, and names the path it checked when neither exists. Java
-8u101 or newer is required by that component, and this is checked before launch rather
-than left to a failed start. A path containing `=` is passed relative to the game
+`MLRC/injector/nide8auth.jar`, and names the path it checked when neither exists. The
+server also publishes the SHA1 of that component, so every launch compares the local
+jar with it and warns when they differ - a server can update its jar at any time, and
+the failure otherwise looks like a login problem. Java 8u101 or newer is required by
+that component, and this is checked before launch rather than left to a failed start. A path containing `=` is passed relative to the game
 directory, because Java splits the agent argument on the first `=`.
 
 The token has a lifetime, and the launcher treats it as one: before starting the game it
