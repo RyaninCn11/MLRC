@@ -363,8 +363,7 @@ async fn import_modrinth(
         root,
         &name,
         &version_id,
-        "",
-        crate::port::config::LaunchConfig::default(),
+        crate::port::config::ForkConfig::default(),
     )?;
     let game_dir = Instance::game_dir(root, &name);
 
@@ -691,8 +690,7 @@ async fn import_curseforge(
         root,
         &name,
         &version_id,
-        "",
-        crate::port::config::LaunchConfig::default(),
+        crate::port::config::ForkConfig::default(),
     )?;
     let game_dir = Instance::game_dir(root, &name);
 

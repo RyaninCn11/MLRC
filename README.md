@@ -124,6 +124,8 @@ service's online-mode servers. The password is asked for and never stored:
 
 ```bash
 mlrc auth login --server https://littleskin.cn/api/yggdrasil --username you@example.com
+mlrc auth accounts                                        # list, * marks the default
+mlrc auth use <label>                                     # choose the default account
 mlrc auth status
 ```
 

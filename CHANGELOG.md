@@ -32,6 +32,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The configuration has two layers with one rule: `java.*` and `launch.*` may be
+  overridden per fork, plus `auth.account`; everything else is global. `config get|set|list
+  --instance <name>` reads and writes the fork's side and marks where each value comes from.
+- Each fork can use its own account. `MLRC/accounts.json` holds every login, `mlrc auth
+  accounts` lists them, `mlrc auth use <label>` picks the default, and a fork names one
+  with `auth.account`. A 1.0.0 `auth.json` is adopted on first read.
+- `general.game_language` became `launch.game_language` (`launch.*` is per fork),
+  `curseforge.api_key` became `general.curseforge_api_key` (a whole table for one key was
+  not worth it), and a fork's heap has one source, `java.xmx`, which `instance create
+  --memory` writes. Old files are migrated on load.
+
 - `auth.kind = auto | offline | yggdrasil | nide8` pins the login backend instead of
   leaving it to be inferred from which keys are set. A login sets it, a logout returns
   it to `auto`, and a pin that cannot be honoured stops the launch with a message

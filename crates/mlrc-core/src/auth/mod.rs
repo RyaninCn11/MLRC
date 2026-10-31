@@ -6,10 +6,12 @@
 //! 2. the player name from the config, in offline mode (the default);
 //! 3. `--username`, which overrides both.
 
+pub mod accounts;
 pub mod nide8;
 pub mod offline;
 pub mod yggdrasil;
 
+pub use accounts::{Account, Accounts};
 pub use offline::{offline, uuid_without_dashes, Identity};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};

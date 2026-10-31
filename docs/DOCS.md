@@ -91,14 +91,15 @@ Notes:
 `MLRC/config.toml`, every key in one place. `mlrc config get|set|list` reads and
 writes it; `set` validates before writing.
 
-Two layers, and only the launch settings live in both. Everything else is global by
-definition. A fork's `instance.json` may override `launch.*`, field by field, and
-`--instance <name>` targets it:
+Two layers. A fork's `instance.json` may override `java.*` and `launch.*` field by field,
+plus `auth.account`; what it leaves empty comes from the global file. Everything else is
+global by definition, because it is not a property of a version: which mirror the machine
+can reach, which key pays for CurseForge.
 
 ```
-mlrc config set launch.brand "My Launcher"                  # every version
+mlrc config set java.xmx 6G --instance survival             # that fork only
 mlrc config set launch.brand "My Pack" --instance survival  # that fork only
-mlrc config get launch.brand --instance survival            # value + where it came from
+mlrc config get java.xmx --instance survival                # value + where it came from
 mlrc config list --instance survival                        # every key, marked [fork] or [global]
 ```
 
@@ -106,30 +107,34 @@ mlrc config list --instance survival                        # every key, marked 
 would be ignored, and `config list` marks each key with its source so "which layer wins"
 is visible rather than inferred.
 
+A fork's heap has one source: `java.xmx`. `mlrc instance create --memory 4G` writes that
+same key, so the two cannot disagree.
+
 A key is always `section.name` and never has a second spelling: `gameLanguage`, `xmx`
 and `mirror` were accepted once and are not any more, because two spellings for one
 setting is how a document drifts. Typing one now fails with the key that was meant.
 
-| Key | Values | Effect |
-|---|---|---|
-| `java.custom` | `false` (default), `true` | `true` allows a host JVM when no managed runtime matches |
-| `java.path` | path, empty | explicit binary; only with `java.custom = true` |
-| `java.xms` | `512M`, `1G`, empty | initial heap; empty leaves the JVM default |
-| `java.xmx` | `2G` (default) | maximum heap; `--memory` and a fork's own value override it |
-| `general.default_version` | version id, empty | what `mlrc launch` starts |
-| `general.mirror` | `auto` (default), `official`, `bmclapi` | download source, see below |
-| `general.proxy` | `auto` (default), `none`, `host:port` | the launcher **and** every child JVM |
-| `general.game_language` | `en_us`, `zh_cn`, empty | written into `options.txt`; see section 5.4 |
-| `launch.brand` | text, empty | `${launcher_name}`; the game prints it in the corner of the main menu (up to 26.0) |
-| `launch.jvm_args` | space-separated flags | appended after the document's own JVM flags |
-| `launch.game_args` | space-separated arguments | appended after the document's own game arguments |
-| `launch.pre_launch` | shell command, empty | run in the game directory before the game starts |
-| `auth.kind` | `auto` (default), `offline`, `yggdrasil`, `nide8` | which backend a launch uses |
-| `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only |
-| `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name |
-| `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode |
-| `auth.nide8_jar` | path, empty | where `nide8auth.jar` lives; empty means `MLRC/injector/nide8auth.jar`, downloaded when missing |
-| `curseforge.api_key` | key, empty | enables the CurseForge source; `none` clears |
+| Key | Values | Meaning | Per fork |
+|---|---|---|---|
+| `java.custom` | `false` (default), `true` | `true` allows a host JVM when no managed runtime matches | yes |
+| `java.path` | path, empty | explicit binary; only with `java.custom = true` | yes |
+| `java.xms` | `512M`, `1G`, empty | initial heap; empty leaves the JVM default | yes |
+| `java.xmx` | `2G` (default) | maximum heap; `--memory` writes the same key | yes |
+| `general.default_version` | version id, empty | what `mlrc launch` starts | no |
+| `general.mirror` | `auto` (default), `official`, `bmclapi` | download source, see below | no |
+| `general.proxy` | `auto` (default), `none`, `host:port` | the launcher **and** every child JVM | no |
+| `general.curseforge_api_key` | key, empty | enables the CurseForge source; `none` clears | no |
+| `launch.brand` | text, empty | `${launcher_name}`; the game prints it in the corner of the main menu (up to 26.0) | yes |
+| `launch.jvm_args` | space-separated flags | appended after the document's own JVM flags | yes |
+| `launch.game_args` | space-separated arguments | appended after the document's own game arguments | yes |
+| `launch.pre_launch` | shell command, empty | run in the game directory before the game starts | yes |
+| `launch.game_language` | `en_us`, `zh_cn`, empty | written into `options.txt`; see section 5.4 | yes |
+| `auth.kind` | `auto` (default), `offline`, `yggdrasil`, `nide8` | which backend a launch uses | no |
+| `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only | no |
+| `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name | no |
+| `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode | no |
+| `auth.nide8_jar` | path, empty | where `nide8auth.jar` lives; empty means `MLRC/injector/nide8auth.jar`, downloaded when missing | no |
+| `auth.account` | account label, empty | which stored account this fork uses; empty means the default | **only** |
 
 Environment variables, which win over the file: `MLRC_DATA_DIR` (the base directory)
 and `MLRC_CURSEFORGE_KEY` (the API key, so it need not be written to disk).
@@ -311,6 +316,16 @@ has replaced its component, which otherwise shows up as a login that fails for n
 visible reason. Java 8u101 or newer is required by that component, and this is checked
 before launch rather than left to a failed start. A path containing `=` is passed
 relative to the game directory, because Java splits the agent argument on the first `=`.
+
+**Several accounts.** `MLRC/accounts.json` holds one entry per login, keyed by a label -
+the profile name by default, or `--name`. A launch picks the one its fork names in
+`auth.account`; a fork that names none gets the default, which `mlrc auth use` sets and
+which starts as the first account stored. With exactly one account and no default, that
+account is used, because a single login needs no configuration. A label costs one file and
+buys the thing forks are for: different servers, different names, one installation.
+
+The default is not a configuration key. It belongs to the account list, not to a version,
+and `config set` says so when asked for it without `--instance`.
 
 The token has a lifetime, and the launcher treats it as one: before starting the game it
 asks the server whether the token is still valid, refreshes it when the answer is no,

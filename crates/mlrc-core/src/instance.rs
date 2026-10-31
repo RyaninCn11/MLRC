@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 use crate::meta::version::VersionJson;
-use crate::port::config::LaunchConfig;
+use crate::port::config::ForkConfig;
 use crate::port::state::{self, InstalledState};
 use crate::port::DataRoot;
 
@@ -24,13 +24,13 @@ pub struct Instance {
     pub name: String,
     /// The version it inherits from.
     pub version: String,
-    /// `-Xmx` for this fork, empty to inherit the global setting.
-    #[serde(default)]
+    /// Heap used to live here; it moved to the fork's `java.xmx`, and this field exists
+    /// only so an `instance.json` written by an earlier version still loads.
+    #[serde(default, skip_serializing)]
     pub memory: String,
-    /// Launch options that apply to this fork only; every empty field inherits from
-    /// `config.toml`.
-    #[serde(default)]
-    pub launch: LaunchConfig,
+    /// Everything this fork overrides; an empty field inherits `config.toml`.
+    #[serde(flatten)]
+    pub fork: ForkConfig,
 }
 
 impl Instance {
@@ -65,8 +65,7 @@ impl Instance {
         root: &DataRoot,
         name: &str,
         version: &str,
-        memory: &str,
-        launch: LaunchConfig,
+        fork: ForkConfig,
     ) -> MlrcResult<Self> {
         Self::validate_name(name)?;
 
@@ -89,12 +88,6 @@ impl Instance {
             );
         }
 
-        let memory = if memory.is_empty() {
-            String::new()
-        } else {
-            crate::launch::memory::normalize(memory)?
-        };
-
         // A child document is only an identity plus a pointer; the rest is inherited.
         let document = format!(
             "{{\n  \"id\": \"{name}\",\n  \"type\": \"release\",\n  \
@@ -113,8 +106,8 @@ impl Instance {
         let instance = Self {
             name: name.to_string(),
             version: version.to_string(),
-            memory,
-            launch,
+            memory: String::new(),
+            fork,
         };
 
         std::fs::create_dir_all(root.state_dir(name))?;
@@ -156,12 +149,18 @@ impl Instance {
         let path = Self::path(root, name);
         match std::fs::read_to_string(&path) {
             Ok(text) => {
-                let instance = serde_json::from_str(&text).map_err(|err| {
+                let mut instance: Self = serde_json::from_str(&text).map_err(|err| {
                     MlrcError::new(
                         ErrorCode::Config,
                         format!("invalid {}: {err}", path.display()),
                     )
                 })?;
+                // An older file kept the heap in `memory`; move it to the fork's layer.
+                if instance.fork.java.xmx.is_empty() && !instance.memory.trim().is_empty() {
+                    if let Ok(value) = crate::launch::memory::normalize(&instance.memory) {
+                        instance.fork.java.xmx = value;
+                    }
+                }
                 Ok(Some(instance))
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),

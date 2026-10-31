@@ -123,6 +123,7 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             nide8,
             username,
             password_stdin,
+            name,
         } => {
             // Unified pass is the same protocol behind a discoverable base url, so the
             // only difference here is where that base comes from.
@@ -202,7 +203,11 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                 session.kind = "nide8".to_string();
                 session.server_id = discovered.id.clone();
             }
-            session.save(&root)?;
+
+            let mut accounts = auth::Accounts::load(&root)?;
+            let label = accounts.put(name.as_deref(), session.clone());
+            accounts.save(&root)?;
+            let _ = auth::yggdrasil::Session::remove(&root);
 
             // Record the backend and where it came from, so a launch does not have to
             // infer either from which keys happen to be set.
@@ -250,6 +255,7 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                         "uuid": session.uuid,
                         "kind": if session.kind.is_empty() { "yggdrasil" } else { session.kind.as_str() },
                     },
+                    "label": label,
                     "injector": injector.as_ref().map(|injector| injector.build),
                 }));
             } else {
@@ -257,6 +263,7 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                     "signed in as {} ({}) on {}",
                     session.name, session.uuid, session.server
                 ));
+                out.human(format!("account:  {label}"));
                 match &injector {
                     Some(injector) => {
                         out.human(format!("authlib-injector build {}", injector.build))
@@ -298,17 +305,28 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             }
             Ok(())
         }
-        AuthCommand::Logout => {
-            let session = auth::yggdrasil::Session::load(&root)?;
+        AuthCommand::Logout { name } => {
+            let mut accounts = auth::Accounts::load(&root)?;
+            let label = match name {
+                Some(label) => label.clone(),
+                None => accounts.default.clone(),
+            };
+
+            let session = accounts.get(&label).map(|account| account.session.clone());
             if let Some(session) = session {
                 let (client, _) = open_client(cli, &root).await?;
-                // Best effort: the local file goes away whether or not the server
-                // answers, which is what the user asked for.
+                // Best effort: the entry goes away whether or not the server answers,
+                // which is what the user asked for.
                 let _ = auth::yggdrasil::invalidate(&client, &session).await;
             }
-            let removed = auth::yggdrasil::Session::remove(&root)?;
+
+            let removed = accounts.remove(&label);
+            if removed {
+                accounts.save(&root)?;
+            }
+
             // No account means no backend to pin; auto falls back to offline.
-            if cfg.auth.kind != config::AuthKind::Auto {
+            if accounts.accounts.is_empty() && cfg.auth.kind != config::AuthKind::Auto {
                 cfg.auth.kind = config::AuthKind::Auto;
                 cfg.save(&root.config_path())?;
             }
@@ -326,8 +344,64 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             }
             Ok(())
         }
-        AuthCommand::Status => {
-            let session = auth::yggdrasil::Session::load(&root)?;
+        AuthCommand::Accounts => {
+            let accounts = auth::Accounts::load(&root)?;
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "accounts",
+                    "default": accounts.default,
+                    "accounts": accounts.labels(),
+                }));
+                return Ok(());
+            }
+
+            if accounts.accounts.is_empty() {
+                out.human("no accounts; run `mlrc auth login`");
+                return Ok(());
+            }
+            for account in &accounts.accounts {
+                let marker = if account.label.eq_ignore_ascii_case(&accounts.default) {
+                    "*"
+                } else {
+                    " "
+                };
+                let kind = if account.session.kind.is_empty() {
+                    "yggdrasil"
+                } else {
+                    account.session.kind.as_str()
+                };
+                out.human(format!(
+                    "{marker} {:<16} {:<10} {}",
+                    account.label, kind, account.session.name
+                ));
+            }
+            Ok(())
+        }
+        AuthCommand::Use { label } => {
+            let mut accounts = auth::Accounts::load(&root)?;
+            accounts.set_default(label)?;
+            accounts.save(&root)?;
+            out.human(format!("default account: {}", accounts.default));
+            out.json_event(json!({
+                "schema": 1,
+                "event": "account",
+                "default": accounts.default,
+            }));
+            Ok(())
+        }
+        AuthCommand::Status { instance } => {
+            let accounts = auth::Accounts::load(&root)?;
+            let fork = match instance {
+                Some(name) => Some(Instance::load(&root, name)?.ok_or_else(|| {
+                    MlrcError::new(ErrorCode::Usage, format!("no such instance: {name}"))
+                        .with("instance", name.clone())
+                })?),
+                None => None,
+            };
+            let session = accounts
+                .get(&accounts.default)
+                .map(|account| account.session.clone());
             let stored_kind = session
                 .as_ref()
                 .map(|session| session.kind.as_str())
@@ -356,6 +430,24 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
 
             // What a launch would do, and why: the mode answers "how does it decide who
             // I am", and the account block is the stored half of that answer.
+            if let Some(instance) = &fork {
+                let wanted = instance.fork.auth.account.trim();
+                match accounts.resolve(wanted) {
+                    Ok(account) => out.human(format!(
+                        "instance: {} uses {}",
+                        instance.name, account.label
+                    )),
+                    Err(_) if wanted.is_empty() => out.human(format!(
+                        "instance: {} uses the default account",
+                        instance.name
+                    )),
+                    Err(err) => out.human(format!(
+                        "instance: {} names {} ({})",
+                        instance.name, wanted, err.message
+                    )),
+                }
+            }
+
             match &resolved {
                 config::Resolved::Offline => {
                     out.human(format!(
@@ -521,11 +613,20 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
                 out.human("# a fork may override the launch.* keys in its own instance.json");
             }
 
-            for key in CONFIG_KEYS {
-                let global = cfg.get(key)?;
+            let mut keys: Vec<&str> = CONFIG_KEYS.to_vec();
+            if fork.is_some() {
+                keys.push("auth.account");
+            }
+
+            for key in keys {
+                let global = if config::is_fork_only(key) {
+                    String::new()
+                } else {
+                    cfg.get(key)?
+                };
                 let (value, source) = match &fork {
-                    Some(instance) if key.starts_with("launch.") => {
-                        match instance.launch.overridden(key) {
+                    Some(instance) if config::is_fork_key(key) => {
+                        match instance.fork.overridden(key) {
                             Some(value) => (value, "fork"),
                             None => (global, "global"),
                         }
@@ -542,10 +643,10 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
                         "source": source,
                     }));
                 } else {
-                    let scope = if key.starts_with("launch.") {
-                        format!(" [{source}]")
-                    } else {
-                        " (global only)".to_string()
+                    let scope = match (&fork, source) {
+                        (None, _) if config::is_fork_key(key) => String::new(),
+                        (None, _) => " (global only)".to_string(),
+                        (Some(_), source) => format!(" [{source}]"),
                     };
                     out.human(format!("{key} = {value}{scope}"));
                 }
@@ -554,14 +655,24 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
         }
         ConfigCommand::Get { key, .. } => {
             let cfg = Config::load(&path)?;
-            let global = cfg.get(key)?;
+            let canonical = config::canonical(key)?;
+            if fork.is_none() && config::is_fork_only(canonical) {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    format!("{canonical} only exists per fork; pass --instance <name>"),
+                )
+                .with("key", canonical.to_string()));
+            }
+            let global = if config::is_fork_only(canonical) {
+                String::new()
+            } else {
+                cfg.get(key)?
+            };
             let (value, source) = match &fork {
-                Some(instance) if key.starts_with("launch.") => {
-                    match instance.launch.overridden(key) {
-                        Some(value) => (value, "fork"),
-                        None => (global, "global"),
-                    }
-                }
+                Some(instance) if config::is_fork_key(key) => match instance.fork.overridden(key) {
+                    Some(value) => (value, "fork"),
+                    None => (global, "global"),
+                },
                 _ => (global, "global"),
             };
 
@@ -585,7 +696,7 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
             let canonical = config::canonical(key)?;
 
             if let Some(mut instance) = fork {
-                if !canonical.starts_with("launch.") {
+                if !config::is_fork_key(canonical) {
                     return Err(MlrcError::new(
                         ErrorCode::Usage,
                         format!(
@@ -594,9 +705,9 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
                     )
                     .with("key", canonical.to_string()));
                 }
-                instance.launch.set_key(canonical, value)?;
+                instance.fork.set_key(canonical, value)?;
                 instance.save(&root)?;
-                let stored = instance.launch.get_key(canonical)?;
+                let stored = instance.fork.get_key(canonical)?;
                 out.human(format!("{}: {key} = {stored}", instance.name));
                 out.json_event(json!({
                     "schema": 1,
@@ -1331,6 +1442,14 @@ async fn cmd_launch(
         None => None,
     };
 
+    // Which layers decide: a fork may name its own account, Java settings and launch
+    // options; everything it leaves empty comes from the global file.
+    let fork_layers = match &instance {
+        Some(instance) => instance.fork.clone(),
+        None => config::ForkConfig::default(),
+    };
+    let effective = fork_layers.apply(&cfg);
+
     let id = match version {
         Some(id) => id.to_string(),
         None => match &instance {
@@ -1358,17 +1477,17 @@ async fn cmd_launch(
         Some(value) => Some(launch::memory::normalize(value)?),
         None => instance
             .as_ref()
-            .map(|instance| instance.memory.clone())
+            .map(|instance| instance.fork.java.xmx.clone())
             .filter(|value| !value.is_empty())
-            .or_else(|| Some(cfg.java.xmx.clone()).filter(|value| !value.is_empty())),
+            .or_else(|| Some(effective.java.xmx.clone()).filter(|value| !value.is_empty())),
     };
-    let initial_heap = Some(cfg.java.xms.clone()).filter(|value| !value.is_empty());
+    let initial_heap = Some(effective.java.xms.clone()).filter(|value| !value.is_empty());
 
     // A flag wins over the configured default; an empty value means "leave the
     // game's own setting alone".
     let language = match lang {
         Some(code) => Some(code.to_string()),
-        None => Some(cfg.general.game_language.clone()),
+        None => Some(effective.launch.game_language.clone()),
     }
     .filter(|code| !code.is_empty());
 
@@ -1426,51 +1545,63 @@ async fn cmd_launch(
     let plan = install::build(&document, &Env::detect())?;
     launch::natives::extract(&plan, &root, &id)?;
 
-    // A stored account wins over the configured name; `--username` forces offline
-    // mode, which is how one plays locally under a different name.
-    // `--offline` and `--username` both mean "do not use the stored account"; otherwise
-    // `auth.kind` decides, and the stored session says which backend it belongs to.
-    let stored = auth::yggdrasil::Session::load(&root)?;
+    // `--offline` and `--username` both mean "do not use a stored account"; otherwise
+    // `auth.kind` decides, and the account it selects says which backend it belongs to.
     let force_offline = offline || username.is_some();
+    let accounts = auth::Accounts::load(&root)?;
+
+    let account = if force_offline || cfg.auth.kind == config::AuthKind::Offline {
+        None
+    } else {
+        match accounts.resolve(&effective.account) {
+            Ok(account) => Some(account.clone()),
+            // `auto` with nothing configured is simply offline.
+            Err(_) if cfg.auth.kind == config::AuthKind::Auto && effective.account.is_empty() => {
+                None
+            }
+            Err(err) => return Err(err),
+        }
+    };
+
     let resolved = if force_offline {
         config::Resolved::Offline
     } else {
         cfg.auth.kind.resolve(
-            stored
+            account
                 .as_ref()
-                .map(|session| session.kind.as_str())
+                .map(|account| account.session.kind.as_str())
                 .filter(|kind| !kind.is_empty()),
         )
     };
 
-    let session = match resolved {
-        config::Resolved::Offline => None,
-        config::Resolved::Missing(backend) => {
-            return Err(MlrcError::new(
+    let session =
+        match resolved {
+            config::Resolved::Offline => None,
+            config::Resolved::Missing(backend) => {
+                return Err(MlrcError::new(
+                    ErrorCode::AuthFailed,
+                    format!("auth.kind is {backend} but no account is stored"),
+                )
+                .with(
+                    "hint",
+                    "run `mlrc auth login`, or `mlrc config set auth.kind auto`",
+                ))
+            }
+            config::Resolved::Wrong(backend) => return Err(MlrcError::new(
                 ErrorCode::AuthFailed,
-                format!("auth.kind is {backend} but no account is stored"),
+                format!("auth.kind is {backend} but the selected account is something else"),
             )
             .with(
                 "hint",
-                "run `mlrc auth login`, or `mlrc config set auth.kind auto`",
-            ))
-        }
-        config::Resolved::Wrong(backend) => {
-            return Err(MlrcError::new(
-                ErrorCode::AuthFailed,
-                format!("auth.kind is {backend} but the stored account is something else"),
-            )
-            .with(
-                "hint",
-                "run `mlrc auth login` again, or set auth.kind to auto",
-            ))
-        }
-        _ => match stored {
-            Some(session) => Some(refresh_session(cli, &root, &cfg, session, out).await?),
-            None => None,
-        },
-    };
+                "name another account with `mlrc config set auth.account`, or set auth.kind auto",
+            )),
+            _ => account.map(|account| account.session),
+        };
 
+    let session = match session {
+        Some(session) => Some(refresh_session(cli, &root, &cfg, session, out).await?),
+        None => None,
+    };
     let mut jvm_args = jvm_args.to_vec();
     let identity = match &session {
         Some(session) if session.kind == "nide8" => {
@@ -1523,10 +1654,7 @@ async fn cmd_launch(
 
     // Global launch settings, then the fork's own values over them, then whatever the
     // command line added on top.
-    let launch_cfg = match &instance {
-        Some(instance) => cfg.launch.over(&instance.launch),
-        None => cfg.launch.clone(),
-    };
+    let launch_cfg = effective.launch.clone();
     let mut extra_game_args = launch_cfg.game_args.clone();
     extra_game_args.extend(game_args.iter().cloned());
     let mut extra_jvm_args = launch_cfg.jvm_args.clone();
@@ -1850,19 +1978,21 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 .with("instance", name.clone()));
             }
 
-            let launch = LaunchConfig {
-                brand: brand.clone().unwrap_or_default(),
-                jvm_args: jvm_args.to_vec(),
-                game_args: game_args.to_vec(),
-                pre_launch: pre_launch.clone().unwrap_or_default(),
+            let mut fork = config::ForkConfig {
+                launch: LaunchConfig {
+                    brand: brand.clone().unwrap_or_default(),
+                    jvm_args: jvm_args.to_vec(),
+                    game_args: game_args.to_vec(),
+                    pre_launch: pre_launch.clone().unwrap_or_default(),
+                    game_language: String::new(),
+                },
+                ..config::ForkConfig::default()
             };
-            let instance = Instance::create(
-                &root,
-                name,
-                version,
-                memory.as_deref().unwrap_or(""),
-                launch,
-            )?;
+            // `--memory` writes the same key `config set java.xmx --instance` writes.
+            if let Some(memory) = memory {
+                fork.java.set_key("java.xmx", memory)?;
+            }
+            let instance = Instance::create(&root, name, version, fork)?;
             let game_dir = Instance::game_dir(&root, &instance.name);
 
             out.human(format!(
@@ -1955,7 +2085,7 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 &root,
                 file,
                 name.as_deref(),
-                cfg.curseforge.key().as_deref(),
+                cfg.curseforge_key().as_deref(),
                 &options,
                 &sink,
             )
@@ -2601,7 +2731,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             }
 
             let source = mods::Source::parse(source)?;
-            let key = cfg.curseforge.key();
+            let key = cfg.curseforge_key();
             let instance = load_instance(&root, instance.as_deref())?;
             // A mod needs a loader; packs do not, which is why this path uses
             // `mod_platform` and `pack_target` exists for the other three kinds.
@@ -2832,7 +2962,7 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 &client,
                 &game_dir,
                 *check,
-                cfg.curseforge.key().as_deref(),
+                cfg.curseforge_key().as_deref(),
                 &sink,
             )
             .await?;

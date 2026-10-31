@@ -360,7 +360,14 @@ pub enum AuthCommand {
         /// Read the password from the first line of stdin instead of prompting.
         #[arg(long)]
         password_stdin: bool,
+        /// Label to store the account under; defaults to the profile name
+        #[arg(long, value_name = "LABEL")]
+        name: Option<String>,
     },
+    /// List stored accounts
+    Accounts,
+    /// Choose the account a launch uses by default
+    Use { label: String },
     /// Open the unified pass registration page for a server
     Register {
         /// Unified pass server id; defaults to auth.nide8_id
@@ -370,10 +377,18 @@ pub enum AuthCommand {
         #[arg(long)]
         print_only: bool,
     },
-    /// Forget the stored account and revoke its token
-    Logout,
-    /// Show the current account
-    Status,
+    /// Forget a stored account and revoke its token
+    Logout {
+        /// Account label; defaults to the default account
+        #[arg(long, value_name = "LABEL")]
+        name: Option<String>,
+    },
+    /// Show the account a launch would use
+    Status {
+        /// Show which account this fork uses, and where the choice comes from
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
