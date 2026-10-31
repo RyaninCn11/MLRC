@@ -36,6 +36,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   leaving it to be inferred from which keys are set. A login sets it, a logout returns
   it to `auto`, and a pin that cannot be honoured stops the launch with a message
   naming the fix.
+- `mlrc config get|set|list --instance <name>` targets a fork's own layer. Only the
+  `launch.*` keys exist per fork; setting a global key with `--instance` is refused, and
+  `config list` marks every key `[fork]` or `[global]` so the winner is visible.
 - `auth status` reports what a launch would do (`mode`, the backend, and the client
   component for that backend) rather than always printing an authlib-injector line, and
   `config list` says where the file is and which keys a fork may override.

@@ -437,7 +437,12 @@ pub enum PackCommand {
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
     /// Print one key
-    Get { key: String },
+    Get {
+        key: String,
+        /// Read the value a fork actually uses, and where it comes from
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+    },
     /// Set one key
     Set {
         key: String,
@@ -445,9 +450,16 @@ pub enum ConfigCommand {
         /// launch.jvm_args -Xmx4G` has to work.
         #[arg(allow_hyphen_values = true)]
         value: String,
+        /// Write the key into this fork instead of the global file
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
     },
     /// Print every known key
-    List,
+    List {
+        /// Print the values a fork actually uses, and where each comes from
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

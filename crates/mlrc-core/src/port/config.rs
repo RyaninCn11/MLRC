@@ -76,6 +76,71 @@ impl LaunchConfig {
     }
 }
 
+impl LaunchConfig {
+    /// The keys a fork may own, in the order `config list` prints them.
+    pub const KEYS: [&'static str; 4] = [
+        "launch.brand",
+        "launch.jvm_args",
+        "launch.game_args",
+        "launch.pre_launch",
+    ];
+
+    pub fn get_key(&self, key: &str) -> MlrcResult<String> {
+        Ok(match key {
+            "launch.brand" => self.brand.clone(),
+            "launch.jvm_args" => self.jvm_args.join(" "),
+            "launch.game_args" => self.game_args.join(" "),
+            "launch.pre_launch" => self.pre_launch.clone(),
+            other => return Err(unknown_key(other)),
+        })
+    }
+
+    pub fn set_key(&mut self, key: &str, value: &str) -> MlrcResult<()> {
+        match key {
+            "launch.brand" => {
+                let trimmed = value.trim();
+                // Empty or `none` restores the default shown by the launcher.
+                self.brand = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                    String::new()
+                } else {
+                    trimmed.to_string()
+                };
+            }
+            "launch.jvm_args" | "launch.game_args" => {
+                // One string, split on whitespace: a shell already joins what the user
+                // typed, and a TOML array is what gets written back.
+                let parsed: Vec<String> = value
+                    .split_whitespace()
+                    .filter(|part| !part.eq_ignore_ascii_case("none"))
+                    .map(str::to_string)
+                    .collect();
+                if key == "launch.game_args" {
+                    self.game_args = parsed;
+                } else {
+                    self.jvm_args = parsed;
+                }
+            }
+            "launch.pre_launch" => {
+                let trimmed = value.trim();
+                self.pre_launch = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                    String::new()
+                } else {
+                    trimmed.to_string()
+                };
+            }
+            other => return Err(unknown_key(other)),
+        }
+
+        Ok(())
+    }
+
+    /// What this layer actually sets, or `None` when the field is empty.
+    pub fn overridden(&self, key: &str) -> Option<String> {
+        let value = self.get_key(key).ok()?;
+        (!value.is_empty()).then_some(value)
+    }
+}
+
 fn pick(over: &str, base: &str) -> String {
     if over.trim().is_empty() {
         base.trim().to_string()
@@ -361,10 +426,7 @@ impl Config {
                     proxy.to_string()
                 }
             }
-            "launch.brand" => self.launch.brand.clone(),
-            "launch.jvm_args" => self.launch.jvm_args.join(" "),
-            "launch.game_args" => self.launch.game_args.join(" "),
-            "launch.pre_launch" => self.launch.pre_launch.clone(),
+            key if key.starts_with("launch.") => self.launch.get_key(key)?,
             "auth.kind" => self.auth.kind.as_str().to_string(),
             "auth.server" => self.auth.server.clone(),
             "auth.player_name" => self.auth.player_name.clone(),
@@ -609,6 +671,29 @@ mod tests {
         assert_eq!(suggest("mirror"), Some("general.mirror"));
         assert_eq!(suggest("xmx"), Some("java.xmx"));
         assert_eq!(suggest("whatever"), None);
+    }
+
+    #[test]
+    fn a_fork_layer_owns_its_keys() {
+        let mut layer = LaunchConfig::default();
+        assert_eq!(layer.overridden("launch.brand"), None);
+
+        layer.set_key("launch.brand", "Fork").expect("brand");
+        layer
+            .set_key("launch.jvm_args", "-Da=1 -Db=2")
+            .expect("jvm");
+        assert_eq!(layer.overridden("launch.brand").as_deref(), Some("Fork"));
+        assert_eq!(
+            layer.overridden("launch.jvm_args").as_deref(),
+            Some("-Da=1 -Db=2")
+        );
+
+        // Empty clears the layer, which is what "inherit" means.
+        layer.set_key("launch.brand", "none").expect("clear");
+        assert_eq!(layer.overridden("launch.brand"), None);
+
+        // A key that is not a launch setting is refused, not silently written.
+        assert!(layer.set_key("java.xmx", "4G").is_err());
     }
 
     #[test]

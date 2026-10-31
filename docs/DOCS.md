@@ -91,6 +91,21 @@ Notes:
 `MLRC/config.toml`, every key in one place. `mlrc config get|set|list` reads and
 writes it; `set` validates before writing.
 
+Two layers, and only the launch settings live in both. Everything else is global by
+definition. A fork's `instance.json` may override `launch.*`, field by field, and
+`--instance <name>` targets it:
+
+```
+mlrc config set launch.brand "My Launcher"                  # every version
+mlrc config set launch.brand "My Pack" --instance survival  # that fork only
+mlrc config get launch.brand --instance survival            # value + where it came from
+mlrc config list --instance survival                        # every key, marked [fork] or [global]
+```
+
+`config set` refuses a global key with `--instance` instead of writing it somewhere it
+would be ignored, and `config list` marks each key with its source so "which layer wins"
+is visible rather than inferred.
+
 A key is always `section.name` and never has a second spelling: `gameLanguage`, `xmx`
 and `mirror` were accepted once and are not any more, because two spellings for one
 setting is how a document drifts. Typing one now fails with the key that was meant.

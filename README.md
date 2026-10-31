@@ -147,6 +147,8 @@ mlrc config set launch.game_args "--demo"
 mlrc config set launch.pre_launch "echo starting"
 mlrc config set launch.brand "My Launcher"
 mlrc instance create demo --version 1.21.1 --game-arg --demo --brand Demo
+mlrc config set launch.jvm_args "-XX:+UseG1GC" --instance demo   # that fork only
+mlrc config list --instance demo                                  # [fork] or [global], per key
 ```
 ### Commands
 
@@ -163,7 +165,7 @@ mlrc instance create demo --version 1.21.1 --game-arg --demo --brand Demo
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc auth login \| logout \| status` | Sign in to a Yggdrasil server, forget it, or show it |
-| `mlrc config get \| set \| list` | Read or write `config.toml` |
+| `mlrc config get \| set \| list` | Read or write `config.toml`; `--instance <name>` reads or writes a fork's layer (`launch.*` only) |
 | `mlrc cache prune [--keep-days N]` | Drop cache objects nothing references |
 | `mlrc doctor` | Check the data directory, network, runtimes and versions |
 

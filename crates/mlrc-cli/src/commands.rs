@@ -487,35 +487,128 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     let path = root.config_path();
 
+    // A fork stores the launch.* keys and nothing else, so a command that names one
+    // writes there; everything else is global by definition.
+    let fork = match command {
+        ConfigCommand::List { instance }
+        | ConfigCommand::Get { instance, .. }
+        | ConfigCommand::Set { instance, .. } => match instance {
+            Some(name) => {
+                root.ensure()?;
+                Some(Instance::load(&root, name)?.ok_or_else(|| {
+                    MlrcError::new(
+                        ErrorCode::VersionUnknown,
+                        format!("no such instance: {name}"),
+                    )
+                    .with("instance", name.clone())
+                })?)
+            }
+            None => None,
+        },
+    };
+
     match command {
-        ConfigCommand::List => {
+        ConfigCommand::List { .. } => {
             let cfg = Config::load(&path)?;
-            // Say where the values live and which of them a fork can override: the two
-            // questions a user has when the same setting appears in two places.
             if !out.is_json() {
-                out.human(format!("# global: {}", path.display()));
+                match &fork {
+                    Some(instance) => out.human(format!(
+                        "# fork {} (instance.json); empty means the global value",
+                        instance.name
+                    )),
+                    None => out.human(format!("# global: {}", path.display())),
+                }
                 out.human("# a fork may override the launch.* keys in its own instance.json");
             }
+
             for key in CONFIG_KEYS {
-                let value = cfg.get(key)?;
-                let scope = if key.starts_with("launch.") {
-                    " (fork-overridable)"
-                } else {
-                    ""
+                let global = cfg.get(key)?;
+                let (value, source) = match &fork {
+                    Some(instance) if key.starts_with("launch.") => {
+                        match instance.launch.overridden(key) {
+                            Some(value) => (value, "fork"),
+                            None => (global, "global"),
+                        }
+                    }
+                    _ => (global, "global"),
                 };
-                out.human(format!("{key} = {value}{scope}"));
-                out.json_event(json!({"schema": 1, "event": "config", "key": key, "value": value}));
+
+                if out.is_json() {
+                    out.json_event(json!({
+                        "schema": 1,
+                        "event": "config",
+                        "key": key,
+                        "value": value,
+                        "source": source,
+                    }));
+                } else {
+                    let scope = if key.starts_with("launch.") {
+                        format!(" [{source}]")
+                    } else {
+                        " (global only)".to_string()
+                    };
+                    out.human(format!("{key} = {value}{scope}"));
+                }
             }
             Ok(())
         }
-        ConfigCommand::Get { key } => {
+        ConfigCommand::Get { key, .. } => {
             let cfg = Config::load(&path)?;
-            let value = cfg.get(key)?;
-            out.human(value.clone());
-            out.json_event(json!({"schema": 1, "event": "config", "key": key, "value": value}));
+            let global = cfg.get(key)?;
+            let (value, source) = match &fork {
+                Some(instance) if key.starts_with("launch.") => {
+                    match instance.launch.overridden(key) {
+                        Some(value) => (value, "fork"),
+                        None => (global, "global"),
+                    }
+                }
+                _ => (global, "global"),
+            };
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "config",
+                    "key": key,
+                    "value": value,
+                    "source": source,
+                }));
+            } else {
+                out.human(value);
+                if fork.is_some() && key.starts_with("launch.") {
+                    out.human(format!("# from {source}"));
+                }
+            }
             Ok(())
         }
-        ConfigCommand::Set { key, value } => {
+        ConfigCommand::Set { key, value, .. } => {
+            let canonical = config::canonical(key)?;
+
+            if let Some(mut instance) = fork {
+                if !canonical.starts_with("launch.") {
+                    return Err(MlrcError::new(
+                        ErrorCode::Usage,
+                        format!(
+                            "{canonical} is global; only the launch.* keys can be set per fork"
+                        ),
+                    )
+                    .with("key", canonical.to_string()));
+                }
+                instance.launch.set_key(canonical, value)?;
+                instance.save(&root)?;
+                let stored = instance.launch.get_key(canonical)?;
+                out.human(format!("{}: {key} = {stored}", instance.name));
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "config",
+                    "key": key,
+                    "value": stored,
+                    "source": "fork",
+                    "instance": instance.name,
+                }));
+                return Ok(());
+            }
+
             let mut cfg = Config::load(&path)?;
             cfg.set(key, value)?;
             cfg.save(&path)?;
