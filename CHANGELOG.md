@@ -30,6 +30,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A pre-launch command that fails stops the launch with `E_PRE_LAUNCH` instead of
   starting the game in a state the command was meant to prepare.
 
+### Changed
+
+- `auth.kind = auto | offline | yggdrasil | nide8` pins the login backend instead of
+  leaving it to be inferred from which keys are set. A login sets it, a logout returns
+  it to `auto`, and a pin that cannot be honoured stops the launch with a message
+  naming the fix.
+- `auth status` reports what a launch would do (`mode`, the backend, and the client
+  component for that backend) rather than always printing an authlib-injector line, and
+  `config list` says where the file is and which keys a fork may override.
+
 ### Fixed
 
 - `mlrc config set` and `--jvm-arg` rejected any value that started with `-`, which

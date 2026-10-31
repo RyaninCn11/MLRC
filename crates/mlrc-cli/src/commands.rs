@@ -204,18 +204,30 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
             }
             session.save(&root)?;
 
-            // Remember where the account came from so `mlrc launch` can find it again,
-            // and fetch the client component now rather than delaying the first launch.
-            match (&unified, &server) {
-                (Some(discovered), _) if cfg.auth.nide8_id != discovered.id => {
-                    cfg.auth.nide8_id = discovered.id.clone();
-                    cfg.save(&root.config_path())?;
-                }
-                (None, server) if cfg.auth.server != *server => {
-                    cfg.auth.server = server.clone();
-                    cfg.save(&root.config_path())?;
-                }
-                _ => {}
+            // Record the backend and where it came from, so a launch does not have to
+            // infer either from which keys happen to be set.
+            let wanted = if unified.is_some() {
+                config::AuthKind::Nide8
+            } else {
+                config::AuthKind::Yggdrasil
+            };
+            let before = (
+                cfg.auth.kind,
+                cfg.auth.nide8_id.clone(),
+                cfg.auth.server.clone(),
+            );
+            cfg.auth.kind = wanted;
+            match &unified {
+                Some(discovered) => cfg.auth.nide8_id = discovered.id.clone(),
+                None => cfg.auth.server = server.clone(),
+            }
+            if (
+                cfg.auth.kind,
+                cfg.auth.nide8_id.clone(),
+                cfg.auth.server.clone(),
+            ) != before
+            {
+                cfg.save(&root.config_path())?;
             }
 
             // The client component is offered here, right after logging in, because that
@@ -295,6 +307,11 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                 let _ = auth::yggdrasil::invalidate(&client, &session).await;
             }
             let removed = auth::yggdrasil::Session::remove(&root)?;
+            // No account means no backend to pin; auto falls back to offline.
+            if cfg.auth.kind != config::AuthKind::Auto {
+                cfg.auth.kind = config::AuthKind::Auto;
+                cfg.save(&root.config_path())?;
+            }
 
             if out.is_json() {
                 out.json_event(json!({
@@ -311,46 +328,91 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
         }
         AuthCommand::Status => {
             let session = auth::yggdrasil::Session::load(&root)?;
-            let injector = auth::yggdrasil::cached_injector(&root)?;
+            let stored_kind = session
+                .as_ref()
+                .map(|session| session.kind.as_str())
+                .filter(|kind| !kind.is_empty());
+            let resolved = cfg.auth.kind.resolve(stored_kind);
 
             if out.is_json() {
                 out.json_event(json!({
                     "schema": 1,
-                    "event": "done",
+                    "event": "account",
+                    "mode": cfg.auth.kind.as_str(),
+                    "backend": resolved.backend(),
+                    "ready": resolved.is_ready(),
                     "account": session.as_ref().map(|session| json!({
+                        "kind": stored_kind.unwrap_or("yggdrasil"),
                         "server": session.server,
+                        "server_id": session.server_id,
                         "username": session.username,
                         "name": session.name,
                         "uuid": session.uuid,
                     })),
-                    "injector": injector.map(|injector| injector.build),
+                    "client": nide8_client_state(&root, &cfg),
                 }));
-            } else {
-                match &session {
-                    Some(session) => {
-                        let kind = if session.kind.is_empty() {
-                            "yggdrasil"
-                        } else {
-                            session.kind.as_str()
-                        };
-                        out.human(format!("account:  {}", session.name));
-                        out.human(format!("uuid:     {}", session.uuid));
-                        out.human(format!("kind:     {kind}"));
-                        out.human(format!("server:   {}", session.server));
-                        if !session.server_id.is_empty() {
-                            out.human(format!("server id: {}", session.server_id));
+                return Ok(());
+            }
+
+            // What a launch would do, and why: the mode answers "how does it decide who
+            // I am", and the account block is the stored half of that answer.
+            match &resolved {
+                config::Resolved::Offline => {
+                    out.human(format!(
+                        "mode:     offline (auth.kind = {})",
+                        cfg.auth.kind.as_str()
+                    ));
+                    match &session {
+                        Some(_) => out.human(
+                            "account:  stored but unused; `mlrc config set auth.kind auto` uses it",
+                        ),
+                        None => out.human("account:  none"),
+                    }
+                    out.human(format!("name:     {}", cfg.auth.player_name));
+                }
+                config::Resolved::Missing(backend) => {
+                    out.human(format!(
+                        "mode:     {backend} (auth.kind = {}) but no account is stored",
+                        cfg.auth.kind.as_str()
+                    ));
+                    out.human("account:  none; run `mlrc auth login`");
+                }
+                config::Resolved::Wrong(backend) => {
+                    out.human(format!(
+                        "mode:     {backend} (auth.kind = {}) but the stored account is {}",
+                        cfg.auth.kind.as_str(),
+                        stored_kind.unwrap_or("yggdrasil")
+                    ));
+                    out.human("account:  run `mlrc auth login` again, or set auth.kind to auto");
+                }
+                _ => {
+                    let session = session.as_ref().expect("a ready backend has a session");
+                    let kind = stored_kind.unwrap_or("yggdrasil");
+                    out.human(format!(
+                        "mode:     {} (auth.kind = {})",
+                        kind,
+                        cfg.auth.kind.as_str()
+                    ));
+                    out.human(format!("account:  {}", session.name));
+                    out.human(format!("uuid:     {}", session.uuid));
+                    out.human(format!("server:   {}", session.server));
+                    if !session.server_id.is_empty() {
+                        out.human(format!("server id: {}", session.server_id));
+                    }
+                    out.human(format!("login:    {}", session.username));
+
+                    match kind {
+                        "nide8" => {
+                            out.human(format!("client:   {}", nide8_client_state(&root, &cfg)));
                         }
-                        out.human(format!("login:    {}", session.username));
+                        _ => match auth::yggdrasil::cached_injector(&root)? {
+                            Some(injector) => {
+                                out.human(format!("injector: build {}", injector.build));
+                            }
+                            None => out.human("injector: not downloaded"),
+                        },
                     }
-                    None => out.human("account:  none (offline mode)"),
                 }
-                match injector {
-                    Some(injector) => {
-                        out.human(format!("injector: build {}", injector.build));
-                    }
-                    None => out.human("injector: not downloaded"),
-                }
-                out.human(format!("name:     {}", cfg.auth.player_name));
             }
             Ok(())
         }
@@ -428,9 +490,20 @@ fn cmd_config(cli: &Cli, out: &Out, command: &ConfigCommand) -> MlrcResult<()> {
     match command {
         ConfigCommand::List => {
             let cfg = Config::load(&path)?;
+            // Say where the values live and which of them a fork can override: the two
+            // questions a user has when the same setting appears in two places.
+            if !out.is_json() {
+                out.human(format!("# global: {}", path.display()));
+                out.human("# a fork may override the launch.* keys in its own instance.json");
+            }
             for key in CONFIG_KEYS {
                 let value = cfg.get(key)?;
-                out.human(format!("{key} = {value}"));
+                let scope = if key.starts_with("launch.") {
+                    " (fork-overridable)"
+                } else {
+                    ""
+                };
+                out.human(format!("{key} = {value}{scope}"));
                 out.json_event(json!({"schema": 1, "event": "config", "key": key, "value": value}));
             }
             Ok(())
@@ -1262,15 +1335,47 @@ async fn cmd_launch(
 
     // A stored account wins over the configured name; `--username` forces offline
     // mode, which is how one plays locally under a different name.
-    // `--offline` and `--username` both mean "do not use the stored account".
-    let session = match username {
-        Some(_) => None,
-        None if offline => None,
-        None => auth::yggdrasil::Session::load(&root)?,
+    // `--offline` and `--username` both mean "do not use the stored account"; otherwise
+    // `auth.kind` decides, and the stored session says which backend it belongs to.
+    let stored = auth::yggdrasil::Session::load(&root)?;
+    let force_offline = offline || username.is_some();
+    let resolved = if force_offline {
+        config::Resolved::Offline
+    } else {
+        cfg.auth.kind.resolve(
+            stored
+                .as_ref()
+                .map(|session| session.kind.as_str())
+                .filter(|kind| !kind.is_empty()),
+        )
     };
-    let session = match session {
-        Some(session) => Some(refresh_session(cli, &root, &cfg, session, out).await?),
-        None => None,
+
+    let session = match resolved {
+        config::Resolved::Offline => None,
+        config::Resolved::Missing(backend) => {
+            return Err(MlrcError::new(
+                ErrorCode::AuthFailed,
+                format!("auth.kind is {backend} but no account is stored"),
+            )
+            .with(
+                "hint",
+                "run `mlrc auth login`, or `mlrc config set auth.kind auto`",
+            ))
+        }
+        config::Resolved::Wrong(backend) => {
+            return Err(MlrcError::new(
+                ErrorCode::AuthFailed,
+                format!("auth.kind is {backend} but the stored account is something else"),
+            )
+            .with(
+                "hint",
+                "run `mlrc auth login` again, or set auth.kind to auto",
+            ))
+        }
+        _ => match stored {
+            Some(session) => Some(refresh_session(cli, &root, &cfg, session, out).await?),
+            None => None,
+        },
     };
 
     let mut jvm_args = jvm_args.to_vec();
@@ -2178,6 +2283,17 @@ fn pack_target(
 ///
 /// The url is printed either way, so a machine without a desktop - a server, a
 /// container - still gets something to copy.
+/// What the unified pass client component looks like, for `auth status`.
+fn nide8_client_state(root: &DataRoot, cfg: &Config) -> String {
+    let path = nide8_jar_path(root, cfg);
+    match std::fs::metadata(&path) {
+        Ok(meta) => format!("{} ({} bytes)", path.display(), meta.len()),
+        Err(_) => format!(
+            "missing at {}; run `mlrc auth login` to download it",
+            path.display()
+        ),
+    }
+}
 fn open_in_browser(url: &str) -> MlrcResult<()> {
     #[cfg(windows)]
     let spawned = std::process::Command::new("cmd")

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 17] = [
+pub const KEYS: [&str; 18] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -20,6 +20,7 @@ pub const KEYS: [&str; 17] = [
     "launch.jvm_args",
     "launch.game_args",
     "launch.pre_launch",
+    "auth.kind",
     "auth.server",
     "auth.player_name",
     "auth.nide8_id",
@@ -91,10 +92,116 @@ fn pick_list(over: &[String], base: &[String]) -> Vec<String> {
     }
 }
 
+/// Which login backend a launch uses.
+///
+/// `Auto` keeps the old behaviour: a stored session decides, and with none the game runs
+/// offline. The other values pin it, so "why is it launching as someone else" has an
+/// answer in one place instead of being inferred from which keys happen to be set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthKind {
+    #[default]
+    Auto,
+    Offline,
+    Yggdrasil,
+    Nide8,
+}
+
+impl AuthKind {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "offline" | "none" => Some(Self::Offline),
+            "yggdrasil" | "third-party" | "thirdparty" => Some(Self::Yggdrasil),
+            "nide8" | "unified-pass" | "unifiedpass" | "pass" => Some(Self::Nide8),
+            _ => None,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Offline => "offline",
+            Self::Yggdrasil => "yggdrasil",
+            Self::Nide8 => "nide8",
+        }
+    }
+
+    /// What a launch will actually do, given the stored session, if any.
+    ///
+    /// `stored` is the session's own kind; empty means yggdrasil, which is what every
+    /// session written before unified pass existed is.
+    pub fn resolve(self, stored: Option<&str>) -> Resolved {
+        let stored = stored.map(|kind| {
+            if kind.trim().is_empty() {
+                "yggdrasil"
+            } else {
+                kind.trim()
+            }
+        });
+
+        match self {
+            Self::Offline => Resolved::Offline,
+            Self::Auto => match stored {
+                Some("nide8") => Resolved::Nide8,
+                Some(_) => Resolved::Yggdrasil,
+                None => Resolved::Offline,
+            },
+            Self::Yggdrasil | Self::Nide8 => {
+                let wanted = if self == Self::Nide8 {
+                    "nide8"
+                } else {
+                    "yggdrasil"
+                };
+                match stored {
+                    None => Resolved::Missing(wanted),
+                    Some(kind) if kind == wanted => {
+                        if wanted == "nide8" {
+                            Resolved::Nide8
+                        } else {
+                            Resolved::Yggdrasil
+                        }
+                    }
+                    Some(_) => Resolved::Wrong(wanted),
+                }
+            }
+        }
+    }
+}
+
+/// What a launch will actually do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolved {
+    Offline,
+    Yggdrasil,
+    Nide8,
+    /// Pinned to this backend, but nothing is stored.
+    Missing(&'static str),
+    /// Pinned to this backend, but the stored session belongs to another.
+    Wrong(&'static str),
+}
+
+impl Resolved {
+    pub fn backend(self) -> &'static str {
+        match self {
+            Self::Offline => "offline",
+            Self::Yggdrasil => "yggdrasil",
+            Self::Nide8 => "nide8",
+            Self::Missing(backend) | Self::Wrong(backend) => backend,
+        }
+    }
+
+    /// True when a launch can proceed with this backend.
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Offline | Self::Yggdrasil | Self::Nide8)
+    }
+}
 /// Who the game says it is.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthConfig {
+    /// Which backend a launch uses; see [`AuthKind`].
+    pub kind: AuthKind,
     /// Yggdrasil API root, e.g. `https://littleskin.cn/api/yggdrasil`. Empty means
     /// offline mode, which is also the default.
     pub server: String,
@@ -109,6 +216,7 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
+            kind: AuthKind::Auto,
             server: String::new(),
             player_name: "Player".to_string(),
             nide8_id: String::new(),
@@ -257,6 +365,7 @@ impl Config {
             "launch.jvm_args" => self.launch.jvm_args.join(" "),
             "launch.game_args" => self.launch.game_args.join(" "),
             "launch.pre_launch" => self.launch.pre_launch.clone(),
+            "auth.kind" => self.auth.kind.as_str().to_string(),
             "auth.server" => self.auth.server.clone(),
             "auth.player_name" => self.auth.player_name.clone(),
             "auth.nide8_id" => self.auth.nide8_id.clone(),
@@ -315,6 +424,14 @@ impl Config {
                     } else {
                         trimmed.to_string()
                     };
+            }
+            "auth.kind" => {
+                self.auth.kind = AuthKind::parse(value).ok_or_else(|| {
+                    MlrcError::new(
+                        ErrorCode::Config,
+                        format!("unknown login kind {value} (expected auto, offline, yggdrasil or nide8)"),
+                    )
+                })?;
             }
             "auth.server" => {
                 // `none` clears it, because an empty shell argument is awkward to pass.
@@ -492,6 +609,45 @@ mod tests {
         assert_eq!(suggest("mirror"), Some("general.mirror"));
         assert_eq!(suggest("xmx"), Some("java.xmx"));
         assert_eq!(suggest("whatever"), None);
+    }
+
+    #[test]
+    fn the_login_kind_decides_the_backend() {
+        use AuthKind::{Auto, Nide8, Offline, Yggdrasil};
+        use Resolved;
+
+        // Auto follows the stored session, and falls back to offline.
+        assert_eq!(Auto.resolve(Some("nide8")), Resolved::Nide8);
+        assert_eq!(Auto.resolve(Some("yggdrasil")), Resolved::Yggdrasil);
+        assert_eq!(Auto.resolve(Some("")), Resolved::Yggdrasil);
+        assert_eq!(Auto.resolve(None), Resolved::Offline);
+
+        // Pinned backends are strict about what is stored.
+        assert_eq!(Yggdrasil.resolve(Some("yggdrasil")), Resolved::Yggdrasil);
+        assert_eq!(Nide8.resolve(Some("nide8")), Resolved::Nide8);
+        assert_eq!(Nide8.resolve(None), Resolved::Missing("nide8"));
+        assert_eq!(Nide8.resolve(Some("yggdrasil")), Resolved::Wrong("nide8"));
+        assert_eq!(
+            Yggdrasil.resolve(Some("nide8")),
+            Resolved::Wrong("yggdrasil")
+        );
+
+        // Offline ignores whatever is stored.
+        assert_eq!(Offline.resolve(Some("nide8")), Resolved::Offline);
+    }
+
+    #[test]
+    fn the_kind_is_spelled_out_and_validated() {
+        assert_eq!(AuthKind::parse("nide8"), Some(AuthKind::Nide8));
+        assert_eq!(AuthKind::parse("Unified-Pass"), Some(AuthKind::Nide8));
+        assert_eq!(AuthKind::parse("AUTO"), Some(AuthKind::Auto));
+        assert_eq!(AuthKind::parse("microsoft"), None);
+
+        let mut config = Config::default();
+        assert_eq!(config.get("auth.kind").expect("get"), "auto");
+        config.set("auth.kind", "nide8").expect("set");
+        assert_eq!(config.auth.kind, AuthKind::Nide8);
+        assert!(config.set("auth.kind", "microsoft").is_err());
     }
 
     #[test]

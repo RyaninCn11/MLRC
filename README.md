@@ -193,6 +193,7 @@ game_args = []           # e.g. ["--demo"]
 pre_launch = ""          # shell command, run in the game directory
 
 [auth]
+kind = "auto"            # auto | offline | yggdrasil | nide8
 server = ""              # Yggdrasil API root; empty means offline only
 player_name = "Player"   # offline name
 ```

@@ -109,6 +109,7 @@ setting is how a document drifts. Typing one now fails with the key that was mea
 | `launch.jvm_args` | space-separated flags | appended after the document's own JVM flags |
 | `launch.game_args` | space-separated arguments | appended after the document's own game arguments |
 | `launch.pre_launch` | shell command, empty | run in the game directory before the game starts |
+| `auth.kind` | `auto` (default), `offline`, `yggdrasil`, `nide8` | which backend a launch uses |
 | `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only |
 | `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name |
 | `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode |
@@ -251,8 +252,15 @@ game directory. Details in [DEVELOPMENT.md](DEVELOPMENT.md#8-mods).
 
 ### 5.1 Identity
 
-Three sources, in order: a stored Yggdrasil account, `auth.player_name`, `--username`
-(which forces offline mode).
+`auth.kind` says which backend a launch uses. `auto` (the default) follows the stored
+session and falls back to offline; `offline`, `yggdrasil` and `nide8` pin it, and a pin
+that cannot be honoured stops the launch with a message saying what to run. A login sets
+the pin to the backend it used, and a logout returns it to `auto`, so the answer to "how
+does it decide who I am" is one key rather than an inference from which other keys
+happen to be populated. `--username` and `--offline` still force offline for one run.
+
+The three sources themselves, in order: the account `auth.kind` selected,
+`auth.player_name`, `--username` (which forces offline mode).
 
 **Offline.** The UUID is MD5 of `OfflinePlayer:<name>` with the RFC 4122 version-3 and
 variant bits applied; the token is a placeholder, so online-mode servers reject it,
