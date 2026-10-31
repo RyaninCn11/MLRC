@@ -29,6 +29,7 @@ pub enum ErrorCode {
     ModConflict,
     ModRestricted,
     AuthFailed,
+    PreLaunch,
 }
 
 impl ErrorCode {
@@ -56,6 +57,7 @@ impl ErrorCode {
             Self::ModConflict => "E_MOD_CONFLICT",
             Self::ModRestricted => "E_MOD_RESTRICTED",
             Self::AuthFailed => "E_AUTH_FAILED",
+            Self::PreLaunch => "E_PRE_LAUNCH",
         }
     }
 
@@ -70,7 +72,8 @@ impl ErrorCode {
             Self::VersionUnknown | Self::VersionIncomplete | Self::LoaderUnavailable => 8,
             Self::ModNotFound | Self::ModConflict | Self::ModRestricted => 9,
             Self::AuthFailed => 4,
-            Self::Config
+            Self::PreLaunch
+            | Self::Config
             | Self::Io
             | Self::Doctor
             | Self::NotImplemented

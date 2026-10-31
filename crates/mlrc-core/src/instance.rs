@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 use crate::meta::version::VersionJson;
+use crate::port::config::LaunchConfig;
 use crate::port::state::{self, InstalledState};
 use crate::port::DataRoot;
 
@@ -26,6 +27,10 @@ pub struct Instance {
     /// `-Xmx` for this fork, empty to inherit the global setting.
     #[serde(default)]
     pub memory: String,
+    /// Launch options that apply to this fork only; every empty field inherits from
+    /// `config.toml`.
+    #[serde(default)]
+    pub launch: LaunchConfig,
 }
 
 impl Instance {
@@ -56,7 +61,13 @@ impl Instance {
         }
     }
 
-    pub fn create(root: &DataRoot, name: &str, version: &str, memory: &str) -> MlrcResult<Self> {
+    pub fn create(
+        root: &DataRoot,
+        name: &str,
+        version: &str,
+        memory: &str,
+        launch: LaunchConfig,
+    ) -> MlrcResult<Self> {
         Self::validate_name(name)?;
 
         // A fork holds no files of its own, so the parent has to be installed.
@@ -103,6 +114,7 @@ impl Instance {
             name: name.to_string(),
             version: version.to_string(),
             memory,
+            launch,
         };
 
         std::fs::create_dir_all(root.state_dir(name))?;

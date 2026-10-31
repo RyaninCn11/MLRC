@@ -27,6 +27,8 @@ const PATH_SEPARATOR: &str = ":";
 pub struct LaunchOptions {
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Extra arguments for the game, appended after the document's own. `${...}`
+    /// markers are expanded here, like everywhere else the user can write them.
     pub extra_game_args: Vec<String>,
     /// Extra JVM flags from the user; when set, `default-user-jvm` is not applied.
     pub jvm_args: Vec<String>,
@@ -36,6 +38,10 @@ pub struct LaunchOptions {
     pub initial_memory: Option<String>,
     /// `general.proxy`: the game needs the same proxy the launcher uses.
     pub proxy: String,
+    /// `launch.brand`: what `${launcher_name}` resolves to, and therefore what the
+    /// game prints in the corner of the main menu and on the debug screen. Empty
+    /// means `MLRC`.
+    pub brand: String,
 }
 
 #[derive(Debug, Clone)]
@@ -116,7 +122,14 @@ pub fn build(
         root.libraries_dir().display().to_string(),
     );
     vars.set("classpath_separator", PATH_SEPARATOR);
-    vars.set("launcher_name", "mlrc");
+    // What the game prints in the corner of the main menu, via
+    // `-Dminecraft.launcher.brand=${launcher_name}`. Mojang stopped displaying it in
+    // 26.1; the property is still passed, it just has nowhere to show.
+    let brand = options.brand.trim();
+    vars.set(
+        "launcher_name",
+        if brand.is_empty() { "MLRC" } else { brand },
+    );
     vars.set("launcher_version", env!("CARGO_PKG_VERSION"));
     if let (Some(width), Some(height)) = (options.width, options.height) {
         vars.set("resolution_width", width.to_string());
@@ -172,7 +185,9 @@ pub fn build(
         }
     }
 
-    jvm.extend(options.jvm_args.iter().cloned());
+    // The user's flags get the same `${...}` expansion the document's do, so
+    // `-Dfoo=${library_directory}` means what it looks like.
+    jvm.extend(options.jvm_args.iter().map(|arg| vars.expand(arg)));
 
     // Some loaders write remapped jars and image caches through `java.io.tmpdir`.
     // Redirect it into the data directory: portable, and immune to a locked-down
@@ -266,7 +281,7 @@ fn game_arguments(
     }
 
     let mut args: Vec<String> = collected.iter().map(|arg| vars.expand(arg)).collect();
-    args.extend(options.extra_game_args.iter().cloned());
+    args.extend(options.extra_game_args.iter().map(|arg| vars.expand(arg)));
     args
 }
 
@@ -312,6 +327,27 @@ mod tests {
 
         let args = game_arguments(&document, &Env::detect(), &vars, &LaunchOptions::default());
         assert_eq!(args, vec!["--username", "Steve", "--version", "1.12.2"]);
+    }
+
+    #[test]
+    fn user_arguments_expand_markers_too() {
+        let document =
+            version(r#"{"id":"1.21.1","arguments":{"game":["--gameDir","${game_directory}"]}}"#);
+        let mut vars = Variables::new();
+        vars.set("game_directory", "C:/games/1.21.1");
+
+        let options = LaunchOptions {
+            extra_game_args: vec!["--demo".to_string(), "--dir=${game_directory}".to_string()],
+            jvm_args: vec!["-Dhere=${game_directory}".to_string()],
+            ..LaunchOptions::default()
+        };
+        let args = game_arguments(&document, &Env::detect(), &vars, &options);
+
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("--dir=C:/games/1.21.1")
+        );
+        assert!(args.contains(&"--demo".to_string()));
     }
 
     #[test]

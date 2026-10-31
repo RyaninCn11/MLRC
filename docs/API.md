@@ -38,7 +38,7 @@ let state = install::install(&client, &root, "1.18.2", &options, &sink).await?;
 | `install::install` | one version, everything it needs |
 | `install::install_loader` | the same, with Fabric/Quilt/Forge/NeoForge on top |
 | `install::preview` | the plan, without downloading |
-| `launch::build` then `launch::spawn` | arguments, then the process |
+| `launch::build` then `launch::spawn` | arguments, then the process. `LaunchOptions` carries the window size, the user's JVM and game arguments, the heap, the proxy and `brand`; `${...}` markers in those arguments are expanded like the document's own |
 | `mods::install`, `mods::update`, `mods::remove`, `mods::plan` | mods |
 | `mods::modpack::import_modrinth` / `import_curseforge` | packs |
 | `doctor::check` | the health report, as data |
@@ -186,6 +186,7 @@ treat "no `done` line" as "did not finish", not as success.
 | `E_JAVA_TOO_OLD` | 5 | the only runtime found is too old |
 | `E_JAVA_META_MISSING` | 5 | the document names no Java |
 | `E_AUTH_FAILED` | 4 | login or token exchange failed |
+| `E_PRE_LAUNCH` | 1 | the configured pre-launch command failed |
 | `E_LOADER_UNAVAILABLE` | 8 | the loader has no build for that version |
 | `E_MOD_NOT_FOUND` | 9 | unknown project, file or mod |
 | `E_MOD_CONFLICT` | 9 | two mods cannot coexist |

@@ -359,7 +359,13 @@ async fn import_modrinth(
     let (version_id, loader_name) =
         ensure_version(client, root, &minecraft, pack.loader(), options, sink).await?;
 
-    let instance = Instance::create(root, &name, &version_id, "")?;
+    let instance = Instance::create(
+        root,
+        &name,
+        &version_id,
+        "",
+        crate::port::config::LaunchConfig::default(),
+    )?;
     let game_dir = Instance::game_dir(root, &name);
 
     // Overrides first: a pack's config files must be in place before the first launch.
@@ -680,7 +686,13 @@ async fn import_curseforge(
     let (version_id, loader_name) =
         ensure_version(client, root, &minecraft, pack.loader(), options, sink).await?;
 
-    let instance = Instance::create(root, &name, &version_id, "")?;
+    let instance = Instance::create(
+        root,
+        &name,
+        &version_id,
+        "",
+        crate::port::config::LaunchConfig::default(),
+    )?;
     let game_dir = Instance::game_dir(root, &name);
 
     for (relative, bytes) in &pack.overrides {

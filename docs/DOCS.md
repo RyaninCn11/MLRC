@@ -104,7 +104,11 @@ setting is how a document drifts. Typing one now fails with the key that was mea
 | `general.default_version` | version id, empty | what `mlrc launch` starts |
 | `general.mirror` | `auto` (default), `official`, `bmclapi` | download source, see below |
 | `general.proxy` | `auto` (default), `none`, `host:port` | the launcher **and** every child JVM |
-| `general.game_language` | `en_us`, `zh_cn`, empty | written into `options.txt`; see section 5.3 |
+| `general.game_language` | `en_us`, `zh_cn`, empty | written into `options.txt`; see section 5.4 |
+| `launch.brand` | text, empty | `${launcher_name}`; the game prints it in the corner of the main menu (up to 26.0) |
+| `launch.jvm_args` | space-separated flags | appended after the document's own JVM flags |
+| `launch.game_args` | space-separated arguments | appended after the document's own game arguments |
+| `launch.pre_launch` | shell command, empty | run in the game directory before the game starts |
 | `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only |
 | `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name |
 | `curseforge.api_key` | key, empty | enables the CurseForge source; `none` clears |
@@ -289,7 +293,30 @@ mlrc launch --instance survival
 Because a fork is a real version id, `list`, `uninstall`, `mod` and `launch <id>`
 accept it without knowing what it is.
 
-### 5.3 Game language
+### 5.3 Launch settings
+
+Five settings shape a launch, and each exists globally and per fork: `launch.brand`,
+`launch.jvm_args`, `launch.game_args`, `launch.pre_launch`, plus the heap. A fork's file
+carries the same struct, and an empty field inherits the global one, so a fork only
+records what it actually changes.
+
+Arguments are appended after the document's own, which is what makes `--demo` work
+without displacing anything Mojang put there. `${...}` markers are expanded in them
+exactly as in the version document, so `-Dhere=${game_directory}` means what it looks
+like; the table is the same one section 5.1 describes.
+
+`launch.pre_launch` runs through the shell in the game directory before the JVM starts.
+Its output is inherited rather than captured, and a non-zero status stops the launch
+with `E_PRE_LAUNCH`: a command that exists to prepare state should not be ignored when
+it fails.
+
+**The window title is not settable.** Minecraft chooses its own title, and it reads no
+property for it; changing it needs bytecode patching or a Java agent, which this
+launcher does not ship. What the game *does* read is the brand string
+(`-Dminecraft.launcher.brand`), and that is `launch.brand`. Mojang stopped displaying it
+in 26.1, so on newer versions the property is passed and has nowhere to show.
+
+### 5.4 Game language
 
 Minecraft has no launch switch for it; it reads `lang:<code>` from `options.txt` in the
 game directory. `--lang zh_cn` rewrites that single line, creating the file when
@@ -297,7 +324,7 @@ missing and leaving every other setting untouched. `general.game_language` does 
 same for every launch; `none` clears it. Codes are Minecraft's own lowercase
 identifiers; anything else is a usage error rather than a silent fallback.
 
-### 5.4 Process
+### 5.5 Process
 
 The game is spawned with inherited stdio and the version directory as working
 directory. Output is not piped: a pipe loses colour, adds buffering and forces decoding

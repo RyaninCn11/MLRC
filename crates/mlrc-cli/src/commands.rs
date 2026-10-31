@@ -28,7 +28,7 @@ use mlrc_core::meta::rule::Env;
 use mlrc_core::meta::version::Artifact;
 use mlrc_core::mods;
 use mlrc_core::plan::install;
-use mlrc_core::port::config::{self, Config, KEYS as CONFIG_KEYS};
+use mlrc_core::port::config::{self, Config, LaunchConfig, KEYS as CONFIG_KEYS};
 use mlrc_core::port::state::{self, InstalledState};
 use mlrc_core::port::DataRoot;
 
@@ -1176,14 +1176,26 @@ async fn cmd_launch(
         }
     };
 
+    // Global launch settings, then the fork's own values over them, then whatever the
+    // command line added on top.
+    let launch_cfg = match &instance {
+        Some(instance) => cfg.launch.over(&instance.launch),
+        None => cfg.launch.clone(),
+    };
+    let mut extra_game_args = launch_cfg.game_args.clone();
+    extra_game_args.extend(game_args.iter().cloned());
+    let mut extra_jvm_args = launch_cfg.jvm_args.clone();
+    extra_jvm_args.extend(jvm_args.iter().cloned());
+
     let options = LaunchOptions {
         width,
         height,
-        extra_game_args: game_args.to_vec(),
-        jvm_args,
+        extra_game_args,
+        jvm_args: extra_jvm_args,
         memory: heap,
         initial_memory: initial_heap,
         proxy: cfg.general.proxy.clone(),
+        brand: launch_cfg.brand.clone(),
     };
     let plan = launch::build(
         &document, &plan, &root, &identity, &java, &game_dir, &options,
@@ -1204,6 +1216,13 @@ async fn cmd_launch(
         out.human(format!("game language: {code}"));
     }
 
+    // A pre-launch command is the user's own: run it in the game directory, show its
+    // output, and stop if it fails rather than starting the game in a state the
+    // command was meant to prepare.
+    if !launch_cfg.pre_launch.trim().is_empty() {
+        run_pre_launch(&launch_cfg.pre_launch, &game_dir, out)?;
+    }
+
     out.human(format!("launching {id} as {}", identity.name));
     let code = launch::spawn::spawn(&plan)?;
     if code != 0 {
@@ -1212,6 +1231,59 @@ async fn cmd_launch(
     Ok(())
 }
 
+/// Runs `launch.pre_launch` before the game, in the game directory.
+///
+/// It is the user's command, so its output and its exit code are theirs too: output is
+/// inherited rather than captured, and a non-zero status stops the launch with a code
+/// that says which piece failed.
+fn run_pre_launch(command: &str, game_dir: &std::path::Path, out: &Out) -> MlrcResult<()> {
+    out.human(format!("pre-launch: {command}"));
+
+    #[cfg(windows)]
+    let child = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg(command)
+        .current_dir(game_dir)
+        .spawn();
+
+    #[cfg(not(windows))]
+    let child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(game_dir)
+        .spawn();
+
+    let status = child
+        .map_err(|err| {
+            MlrcError::new(
+                ErrorCode::PreLaunch,
+                format!("cannot run the pre-launch command: {err}"),
+            )
+            .with("command", command.to_string())
+        })?
+        .wait()
+        .map_err(|err| {
+            MlrcError::new(
+                ErrorCode::PreLaunch,
+                format!("the pre-launch command could not be waited for: {err}"),
+            )
+            .with("command", command.to_string())
+        })?;
+
+    if !status.success() {
+        return Err(MlrcError::new(
+            ErrorCode::PreLaunch,
+            format!(
+                "the pre-launch command failed with {}",
+                status.code().unwrap_or(-1)
+            ),
+        )
+        .with("command", command.to_string())
+        .with("hint", "fix or clear launch.pre_launch, then launch again"));
+    }
+
+    Ok(())
+}
 fn print_launch(out: &Out, plan: &launch::LaunchPlan) {
     let argv = masked_argv(plan);
 
@@ -1402,6 +1474,10 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
             name,
             version,
             memory,
+            jvm_args,
+            game_args,
+            pre_launch,
+            brand,
         } => {
             // A fork holds only a document and a hardlinked jar; the version it points
             // at has to exist already.
@@ -1429,7 +1505,19 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
                 .with("instance", name.clone()));
             }
 
-            let instance = Instance::create(&root, name, version, memory.as_deref().unwrap_or(""))?;
+            let launch = LaunchConfig {
+                brand: brand.clone().unwrap_or_default(),
+                jvm_args: jvm_args.to_vec(),
+                game_args: game_args.to_vec(),
+                pre_launch: pre_launch.clone().unwrap_or_default(),
+            };
+            let instance = Instance::create(
+                &root,
+                name,
+                version,
+                memory.as_deref().unwrap_or(""),
+                launch,
+            )?;
             let game_dir = Instance::game_dir(&root, &instance.name);
 
             out.human(format!(

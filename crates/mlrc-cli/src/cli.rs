@@ -127,6 +127,7 @@ pub enum Command {
 
         /// Extra JVM flag, repeatable, e.g. --jvm-arg -XX:+UseG1GC
         #[arg(long, value_name = "ARG", allow_hyphen_values = true)]
+        #[arg(long, allow_hyphen_values = true, value_name = "ARG")]
         jvm_arg: Vec<String>,
 
         /// Extra arguments for the game, after `--`
@@ -207,6 +208,18 @@ pub enum InstanceCommand {
         /// Heap for this instance, e.g. 4G. Defaults to the global setting.
         #[arg(long, value_name = "SIZE")]
         memory: Option<String>,
+        /// Extra JVM flag for this instance; repeatable
+        #[arg(long = "jvm-arg", allow_hyphen_values = true, value_name = "ARG")]
+        jvm_args: Vec<String>,
+        /// Extra game argument for this instance; repeatable
+        #[arg(long = "game-arg", allow_hyphen_values = true, value_name = "ARG")]
+        game_args: Vec<String>,
+        /// Command to run before the game starts, in the game directory
+        #[arg(long, value_name = "COMMAND")]
+        pre_launch: Option<String>,
+        /// Text shown in the game's corner instead of `MLRC`
+        #[arg(long, value_name = "TEXT")]
+        brand: Option<String>,
     },
     /// List instances
     List,
@@ -350,7 +363,13 @@ pub enum ConfigCommand {
     /// Print one key
     Get { key: String },
     /// Set one key
-    Set { key: String, value: String },
+    Set {
+        key: String,
+        /// A value starting with `-` is a value, not a flag: `mlrc config set
+        /// launch.jvm_args -Xmx4G` has to work.
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+    },
     /// Print every known key
     List,
 }

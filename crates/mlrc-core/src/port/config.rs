@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ErrorCode, MlrcError, MlrcResult};
 
 /// Canonical key order, used by `mlrc config list`.
-pub const KEYS: [&str; 11] = [
+pub const KEYS: [&str; 15] = [
     "java.custom",
     "java.path",
     "java.xms",
@@ -16,6 +16,10 @@ pub const KEYS: [&str; 11] = [
     "general.mirror",
     "general.game_language",
     "general.proxy",
+    "launch.brand",
+    "launch.jvm_args",
+    "launch.game_args",
+    "launch.pre_launch",
     "auth.server",
     "auth.player_name",
     "curseforge.api_key",
@@ -26,8 +30,63 @@ pub const KEYS: [&str; 11] = [
 pub struct Config {
     pub java: JavaConfig,
     pub general: GeneralConfig,
+    pub launch: LaunchConfig,
     pub auth: AuthConfig,
     pub curseforge: CurseForgeConfig,
+}
+
+/// How the game is started, in the parts a launcher may influence.
+///
+/// Every field is "empty means unset", so the same struct serves the global file and a
+/// fork's own overrides, and merging them is a field-by-field choice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaunchConfig {
+    /// Replaces `-Dminecraft.launcher.brand`, which the game shows in the corner of
+    /// the main menu and on the debug screen. Empty means `MLRC`.
+    pub brand: String,
+    /// Extra JVM flags, appended after the document's own. `${...}` markers are
+    /// expanded like the ones Minecraft itself understands.
+    pub jvm_args: Vec<String>,
+    /// Extra arguments for the game itself, appended after the document's own.
+    pub game_args: Vec<String>,
+    /// A shell command run before the game starts, in the game directory.
+    pub pre_launch: String,
+}
+
+impl LaunchConfig {
+    /// Per-field override: whatever `other` sets wins, everything else is inherited.
+    pub fn over(&self, other: &Self) -> Self {
+        Self {
+            brand: pick(&other.brand, &self.brand),
+            jvm_args: pick_list(&other.jvm_args, &self.jvm_args),
+            game_args: pick_list(&other.game_args, &self.game_args),
+            pre_launch: pick(&other.pre_launch, &self.pre_launch),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.brand.trim().is_empty()
+            && self.jvm_args.is_empty()
+            && self.game_args.is_empty()
+            && self.pre_launch.trim().is_empty()
+    }
+}
+
+fn pick(over: &str, base: &str) -> String {
+    if over.trim().is_empty() {
+        base.trim().to_string()
+    } else {
+        over.trim().to_string()
+    }
+}
+
+fn pick_list(over: &[String], base: &[String]) -> Vec<String> {
+    if over.is_empty() {
+        base.to_vec()
+    } else {
+        over.to_vec()
+    }
 }
 
 /// Who the game says it is.
@@ -186,6 +245,10 @@ impl Config {
                     proxy.to_string()
                 }
             }
+            "launch.brand" => self.launch.brand.clone(),
+            "launch.jvm_args" => self.launch.jvm_args.join(" "),
+            "launch.game_args" => self.launch.game_args.join(" "),
+            "launch.pre_launch" => self.launch.pre_launch.clone(),
             "auth.server" => self.auth.server.clone(),
             "auth.player_name" => self.auth.player_name.clone(),
             "curseforge.api_key" => self.curseforge.api_key.clone(),
@@ -210,6 +273,38 @@ impl Config {
                 } else {
                     self.java.xmx = stored;
                 }
+            }
+            "launch.brand" => {
+                let trimmed = value.trim();
+                // Empty or `none` restores the default shown by the launcher.
+                self.launch.brand = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                    String::new()
+                } else {
+                    trimmed.to_string()
+                };
+            }
+            "launch.jvm_args" | "launch.game_args" => {
+                // One string, split on whitespace: a shell already joins what the user
+                // typed, and a TOML array is what gets written back.
+                let parsed: Vec<String> = value
+                    .split_whitespace()
+                    .filter(|part| !part.eq_ignore_ascii_case("none"))
+                    .map(str::to_string)
+                    .collect();
+                if key.trim() == "launch.game_args" {
+                    self.launch.game_args = parsed;
+                } else {
+                    self.launch.jvm_args = parsed;
+                }
+            }
+            "launch.pre_launch" => {
+                let trimmed = value.trim();
+                self.launch.pre_launch =
+                    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+                        String::new()
+                    } else {
+                        trimmed.to_string()
+                    };
             }
             "auth.server" => {
                 // `none` clears it, because an empty shell argument is awkward to pass.
@@ -370,6 +465,49 @@ mod tests {
         assert_eq!(suggest("mirror"), Some("general.mirror"));
         assert_eq!(suggest("xmx"), Some("java.xmx"));
         assert_eq!(suggest("whatever"), None);
+    }
+
+    #[test]
+    fn launch_settings_round_trip() {
+        let mut config = Config::default();
+        config
+            .set("launch.jvm_args", "-Xmx2G -Dfoo=bar")
+            .expect("jvm args");
+        assert_eq!(config.launch.jvm_args, vec!["-Xmx2G", "-Dfoo=bar"]);
+        assert_eq!(
+            config.get("launch.jvm_args").expect("get"),
+            "-Xmx2G -Dfoo=bar"
+        );
+
+        config.set("launch.game_args", "--demo").expect("game args");
+        assert_eq!(config.launch.game_args, vec!["--demo"]);
+
+        config.set("launch.brand", "MyLauncher").expect("brand");
+        assert_eq!(config.launch.brand, "MyLauncher");
+        config.set("launch.brand", "none").expect("clear brand");
+        assert!(config.launch.brand.is_empty());
+    }
+
+    #[test]
+    fn a_fork_overrides_field_by_field() {
+        let base = LaunchConfig {
+            brand: "Base".to_string(),
+            jvm_args: vec!["-Da".to_string()],
+            game_args: vec!["--demo".to_string()],
+            pre_launch: "echo base".to_string(),
+        };
+        let over = LaunchConfig {
+            brand: String::new(),
+            jvm_args: Vec::new(),
+            game_args: vec!["--server".to_string()],
+            pre_launch: String::new(),
+        };
+
+        let merged = base.over(&over);
+        assert_eq!(merged.brand, "Base", "an empty field inherits");
+        assert_eq!(merged.jvm_args, vec!["-Da"], "an empty list inherits");
+        assert_eq!(merged.game_args, vec!["--server"], "a set field wins");
+        assert_eq!(merged.pre_launch, "echo base");
     }
 
     #[test]

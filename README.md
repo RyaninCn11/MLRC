@@ -125,6 +125,18 @@ mlrc launch --lang zh_cn
 mlrc config set general.game_language zh_cn
 mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 ```
+
+**Launch settings.** JVM flags, game arguments, a command to run first, and the brand
+text the game shows in its corner - globally or per fork. `${...}` markers work here
+exactly as they do in a version document:
+
+```bash
+mlrc config set launch.jvm_args "-XX:+UseG1GC -Dhere=${game_directory}"
+mlrc config set launch.game_args "--demo"
+mlrc config set launch.pre_launch "echo starting"
+mlrc config set launch.brand "My Launcher"
+mlrc instance create demo --version 1.21.1 --game-arg --demo --brand Demo
+```
 ### Commands
 
 | Command | Purpose |
@@ -134,7 +146,7 @@ mlrc --mirror bmclapi install 1.12.2           # auto probes both and remembers
 | `mlrc list [--all]` | Installed versions, or every version in the manifest |
 | `mlrc use <version>` | Set the default version |
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
-| `mlrc instance create \| list \| remove` | Forks: a version with its own worlds and mods, sharing the parent's files (`--memory` each) |
+| `mlrc instance create \| list \| remove` | Forks: a version with its own worlds and mods, sharing the parent's files (`--memory`, `--jvm-arg`, `--game-arg`, `--pre-launch`, `--brand`) |
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies, `--dry-run` shows them first |
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
@@ -162,10 +174,18 @@ mirror = "auto"     # auto | official | bmclapi
 proxy = "auto"      # auto | none | host:port; also passed to the game's JVM
 game_language = ""  # e.g. zh_cn
 
+[launch]
+brand = ""               # corner text instead of MLRC; empty restores it
+jvm_args = []            # e.g. ["-XX:+UseG1GC"]
+game_args = []           # e.g. ["--demo"]
+pre_launch = ""          # shell command, run in the game directory
+
 [auth]
 server = ""              # Yggdrasil API root; empty means offline only
 player_name = "Player"   # offline name
 ```
+
+A fork may override any of the `launch` values; an empty field inherits the global one.
 
 Exit codes are stable: `0` success, `2` usage, `3` network, `4` authentication,
 `5` Java, `7` portable directory not writable, `8` version not installed. `--json`
