@@ -10,6 +10,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Resource packs, shader packs and data packs: `mlrc pack search|install|list|remove`.
+  The kind is read from Modrinth instead of demanded as a flag, and `--world` places a
+  data pack inside one world.
 - Launch settings, global and per fork: `launch.brand`, `launch.jvm_args`,
   `launch.game_args` and `launch.pre_launch`. `mlrc instance create` sets them with
   `--brand`, `--jvm-arg`, `--game-arg` and `--pre-launch`, and an empty field inherits

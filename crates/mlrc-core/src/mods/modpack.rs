@@ -456,6 +456,7 @@ async fn import_modrinth(
                     .unwrap_or_default(),
                 sha1: file.hashes.sha1.clone(),
                 source: String::new(),
+                kind: String::new(),
             });
         }
     }
@@ -765,6 +766,7 @@ async fn import_curseforge(
             filename: resolved.file_name.clone(),
             sha1: resolved.sha1.clone(),
             source: "curseforge".to_string(),
+            kind: String::new(),
         });
     }
 

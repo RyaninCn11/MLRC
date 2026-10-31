@@ -34,7 +34,7 @@ use mlrc_core::port::DataRoot;
 
 use crate::cli::{
     AuthCommand, CacheCommand, Cli, Command, ConfigCommand, InstanceCommand, JavaCommand,
-    JavaMode as CliJavaMode, MirrorArg, ModCommand,
+    JavaMode as CliJavaMode, MirrorArg, ModCommand, PackCommand,
 };
 use crate::progress::Sink;
 use crate::render::Out;
@@ -106,6 +106,7 @@ pub async fn run(cli: &Cli, out: &Out) -> MlrcResult<()> {
         Command::Cache { command } => cmd_cache(cli, out, command),
         Command::Instance { command } => cmd_instance(cli, out, command).await,
         Command::Mod { command } => cmd_mod(cli, out, command).await,
+        Command::Pack { command } => cmd_pack(cli, out, command).await,
         Command::Java { command } => cmd_java(cli, out, command).await,
         Command::Auth { command } => cmd_auth(cli, out, command).await,
     }
@@ -1694,6 +1695,352 @@ async fn cmd_instance(cli: &Cli, out: &Out, command: &InstanceCommand) -> MlrcRe
     Ok(())
 }
 
+async fn cmd_pack(cli: &Cli, out: &Out, command: &PackCommand) -> MlrcResult<()> {
+    let root = DataRoot::resolve(cli.data_dir.as_deref())?;
+    root.ensure()?;
+    let cfg = Config::load(&root.config_path())?;
+    let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
+    let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
+
+    match command {
+        PackCommand::Search {
+            query,
+            kind,
+            instance,
+            version,
+            mc,
+            limit,
+        } => {
+            let kind = pack_kind(kind)?;
+            let instance = load_instance(&root, instance.as_deref())?;
+            // A pack has no loader, so `--mc` alone is enough; otherwise the game
+            // version comes from the version or fork being targeted.
+            let game = match mc {
+                Some(value) => value.clone(),
+                None => {
+                    let (id, _) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
+                    mods::minecraft_of(&root, &id)?
+                }
+            };
+
+            let hits = mods::modrinth::search(&client, query, &game, None, kind, *limit).await?;
+
+            if out.is_json() {
+                let items: Vec<_> = hits
+                    .iter()
+                    .map(|hit| {
+                        json!({
+                            "slug": hit.slug,
+                            "title": hit.title,
+                            "description": hit.description,
+                            "downloads": hit.downloads,
+                        })
+                    })
+                    .collect();
+                out.json_event(json!({"schema": 1, "event": "pack_search", "hits": items}));
+                return Ok(());
+            }
+
+            if hits.is_empty() {
+                out.human(format!(
+                    "no {} match {query} for minecraft {game}",
+                    kind.as_str()
+                ));
+                return Ok(());
+            }
+
+            for hit in hits {
+                out.human(format!(
+                    "{:<40}{:>10}  {}",
+                    truncate(&hit.slug, 40),
+                    thousands(hit.downloads),
+                    truncate(&hit.title, 60)
+                ));
+            }
+            Ok(())
+        }
+        PackCommand::Install {
+            projects,
+            kind,
+            world,
+            instance,
+            version,
+            dry_run,
+        } => {
+            if projects.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no project given; run `mlrc pack search` to find one",
+                ));
+            }
+
+            let flag_kind = match kind {
+                Some(text) => Some(pack_kind(text)?),
+                None => None,
+            };
+            let instance = load_instance(&root, instance.as_deref())?;
+            let (id, game_dir) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
+            let platform = mods::Platform {
+                mc: mods::minecraft_of(&root, &id)?,
+                loader: String::new(),
+            };
+
+            let sink = Sink::for_run(cli.json, cli.quiet);
+            for project in projects {
+                // Modrinth says what the project is; the flag only overrides it, so
+                // `pack install sodium` cannot quietly land in `resourcepacks/`.
+                let kind = match flag_kind {
+                    Some(kind) => kind,
+                    None => {
+                        let reported = mods::modrinth::project_type(&client, project).await?;
+                        match mods::Kind::parse(&reported) {
+                            Some(mods::Kind::Mod) => {
+                                return Err(MlrcError::new(
+                                    ErrorCode::Usage,
+                                    format!("{project} is a mod; use `mlrc mod install {project}`"),
+                                ))
+                            }
+                            Some(kind) => kind,
+                            None => {
+                                return Err(MlrcError::new(
+                                    ErrorCode::Usage,
+                                    format!(
+                                        "{project} is a {reported}, which this launcher does not install"
+                                    ),
+                                ))
+                            }
+                        }
+                    }
+                };
+
+                if *dry_run {
+                    let plan = mods::plan(
+                        &client,
+                        &platform,
+                        project,
+                        kind,
+                        mods::Source::Modrinth,
+                        None,
+                    )
+                    .await?;
+                    for item in plan {
+                        out.human(format!(
+                            "would install {} ({}) into {}",
+                            item.filename,
+                            item.version,
+                            kind.dir(&game_dir, world.as_deref()).display()
+                        ));
+                    }
+                    continue;
+                }
+
+                let installed = mods::install_from(
+                    &client,
+                    &game_dir,
+                    &platform,
+                    project,
+                    kind,
+                    world.as_deref(),
+                    mods::Source::Modrinth,
+                    None,
+                    &sink,
+                )
+                .await?;
+                sink.finish();
+
+                for item in installed {
+                    let action = if item.already_present {
+                        "already present"
+                    } else {
+                        "installed"
+                    };
+                    out.human(format!("{action} {} ({})", item.filename, kind.as_str()));
+                }
+            }
+
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "packs_installed",
+                    "directory": game_dir.display().to_string(),
+                }));
+            }
+            Ok(())
+        }
+        PackCommand::List {
+            kind,
+            instance,
+            version,
+        } => {
+            let only = match kind {
+                Some(text) => Some(pack_kind(text)?),
+                None => None,
+            };
+            let instance = load_instance(&root, instance.as_deref())?;
+            let (_, game_dir) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
+            let manifest = mods::manifest::Manifest::load(&game_dir)?;
+
+            let kinds: Vec<mods::Kind> = match only {
+                Some(kind) => vec![kind],
+                None => vec![
+                    mods::Kind::ResourcePack,
+                    mods::Kind::Shader,
+                    mods::Kind::DataPack,
+                ],
+            };
+
+            let mut rows = Vec::new();
+            for kind in kinds {
+                let dir = kind.dir(&game_dir, None);
+                if !dir.is_dir() {
+                    continue;
+                }
+                for entry in std::fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    if !entry.file_type()?.is_file() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let tracked = manifest
+                        .mods
+                        .iter()
+                        .find(|item| item.filename == name)
+                        .map(|item| item.project.clone())
+                        .unwrap_or_default();
+                    rows.push((kind, name, tracked));
+                }
+            }
+            rows.sort_by(|left, right| {
+                (left.0.folder(), &left.1).cmp(&(right.0.folder(), &right.1))
+            });
+
+            if out.is_json() {
+                let items: Vec<_> = rows
+                    .iter()
+                    .map(|(kind, name, project)| {
+                        json!({"kind": kind.as_str(), "filename": name, "project": project})
+                    })
+                    .collect();
+                out.json_event(json!({"schema": 1, "event": "packs", "packs": items}));
+                return Ok(());
+            }
+
+            if rows.is_empty() {
+                out.human("no packs installed");
+                return Ok(());
+            }
+            out.human(format!("{:<14}{:<46}{}", "KIND", "FILE", "PROJECT"));
+            for (kind, name, project) in rows {
+                out.human(format!(
+                    "{:<14}{:<46}{}",
+                    kind.as_str(),
+                    truncate(&name, 46),
+                    project
+                ));
+            }
+            Ok(())
+        }
+        PackCommand::Remove {
+            files,
+            kind,
+            instance,
+            version,
+        } => {
+            if files.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    "no file given; run `mlrc pack list` to see them",
+                ));
+            }
+            let only = match kind {
+                Some(text) => Some(pack_kind(text)?),
+                None => None,
+            };
+            let instance = load_instance(&root, instance.as_deref())?;
+            let (_, game_dir) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
+
+            let kinds: Vec<mods::Kind> = match only {
+                Some(kind) => vec![kind],
+                None => vec![
+                    mods::Kind::ResourcePack,
+                    mods::Kind::Shader,
+                    mods::Kind::DataPack,
+                ],
+            };
+
+            let mut removed = Vec::new();
+            for kind in kinds {
+                let dir = kind.dir(&game_dir, None);
+                for file in files {
+                    let target = dir.join(file);
+                    if target.is_file() {
+                        std::fs::remove_file(&target)?;
+                        removed.push((kind, file.clone()));
+                    }
+                }
+            }
+
+            if removed.is_empty() {
+                return Err(MlrcError::new(
+                    ErrorCode::ModNotFound,
+                    format!("no such pack: {}", files.join(", ")),
+                ));
+            }
+
+            for (kind, file) in &removed {
+                out.human(format!("removed {} ({})", file, kind.as_str()));
+            }
+            if out.is_json() {
+                out.json_event(json!({
+                    "schema": 1,
+                    "event": "packs_removed",
+                    "files": removed.iter().map(|(_, file)| file.clone()).collect::<Vec<_>>(),
+                }));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The version a pack command acts on: explicit, from a fork, or the default.
+///
+/// Packs do not need a loader, so this returns the game directory and the id rather
+/// than a `Platform`: `mlrc pack install` has to work on a vanilla version.
+fn pack_target(
+    root: &DataRoot,
+    cfg: &Config,
+    version: Option<&str>,
+    instance: Option<&Instance>,
+) -> MlrcResult<(String, std::path::PathBuf)> {
+    let id =
+        match (version, instance) {
+            (Some(id), _) => id.to_string(),
+            (None, Some(instance)) => instance.name.clone(),
+            (None, None) if !cfg.general.default_version.is_empty() => {
+                cfg.general.default_version.clone()
+            }
+            (None, None) => return Err(MlrcError::new(
+                ErrorCode::Usage,
+                "no version to install into; pass --version or --instance, or `mlrc use <version>`",
+            )),
+        };
+    let game_dir = root.game_dir(&id);
+    Ok((id, game_dir))
+}
+
+fn pack_kind(text: &str) -> MlrcResult<mods::Kind> {
+    match mods::Kind::parse(text) {
+        Some(mods::Kind::Mod) => Err(MlrcError::new(
+            ErrorCode::Usage,
+            "mods are managed by `mlrc mod`; `mlrc pack` handles resource packs, shaders and data packs",
+        )),
+        Some(kind) => Ok(kind),
+        None => Err(MlrcError::new(
+            ErrorCode::Usage,
+            format!("unknown kind {text} (expected resourcepack, shader or datapack)"),
+        )),
+    }
+}
 async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
     let root = DataRoot::resolve(cli.data_dir.as_deref())?;
     root.ensure()?;
@@ -1729,9 +2076,15 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                 mc.as_deref(),
                 loader.as_deref(),
             )?;
-            let hits =
-                mods::modrinth::search(&client, query, &platform.mc, &platform.loader, *limit)
-                    .await?;
+            let hits = mods::modrinth::search(
+                &client,
+                query,
+                &platform.mc,
+                Some(&platform.loader),
+                mods::Kind::Mod,
+                *limit,
+            )
+            .await?;
 
             if out.is_json() {
                 let items: Vec<_> = hits
@@ -1784,21 +2137,25 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let source = mods::Source::parse(source)?;
             let key = cfg.curseforge.key();
             let instance = load_instance(&root, instance.as_deref())?;
-            let (platform, target) = mod_platform(
-                &root,
-                &cfg,
-                version.as_deref(),
-                instance.as_ref(),
-                None,
-                None,
-            )?;
-            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
+            let (id, game_dir) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
+            let platform = mods::Platform {
+                mc: mods::minecraft_of(&root, &id)?,
+                loader: String::new(),
+            };
 
             if *dry_run {
                 let mut planned = Vec::new();
                 for project in projects {
                     planned.extend(
-                        mods::plan(&client, &platform, project, source, key.as_deref()).await?,
+                        mods::plan(
+                            &client,
+                            &platform,
+                            project,
+                            mods::Kind::Mod,
+                            source,
+                            key.as_deref(),
+                        )
+                        .await?,
                     );
                 }
 
@@ -1857,6 +2214,8 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
                     &game_dir,
                     &platform,
                     project,
+                    mods::Kind::Mod,
+                    None,
                     source,
                     key.as_deref(),
                     &sink,

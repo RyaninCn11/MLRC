@@ -230,6 +230,14 @@ the question people actually have.
 of an installed version; required dependencies come with it. CurseForge is a second
 source, keyed by the user, and answers per project id.
 
+Resource packs, shader packs and data packs go through the same pipeline under
+`mlrc pack`, because only two things differ: the folder and the source's own project
+type. The kind is read from Modrinth rather than demanded as a flag, so
+`mlrc pack install sodium` says "that is a mod" instead of dropping a jar into
+`resourcepacks/`. A data pack has two homes - the game has no global folder for them,
+so `--world <name>` puts it inside that world, where vanilla looks, and without it the
+file goes to `<game>/datapacks/`, which datapack-loading mods read.
+
 What the launcher guarantees: a disabled mod is renamed, not deleted; a second install
 of the same file is a no-op; an update never downgrades a release to a beta; an
 existing jar is never overwritten silently; and a pack archive cannot write outside the

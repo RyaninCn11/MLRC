@@ -39,6 +39,10 @@ pub struct Entry {
     /// written before the second source existed means.
     #[serde(default)]
     pub source: String,
+    /// `mod`, `resourcepack`, `shader` or `datapack`. Empty means mod: that is what
+    /// every manifest written before packs existed means.
+    #[serde(default)]
+    pub kind: String,
 }
 
 impl Manifest {
@@ -143,6 +147,7 @@ mod tests {
             filename: file.to_string(),
             sha1: String::new(),
             source: String::new(),
+            kind: String::new(),
         }
     }
 

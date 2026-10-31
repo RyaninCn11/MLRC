@@ -1,9 +1,12 @@
 //! Mods: which loader an installed version runs, and installing jars into `mods/`.
 
 pub mod curseforge;
+pub mod kind;
 pub mod manifest;
 pub mod modpack;
 pub mod modrinth;
+
+pub use kind::Kind;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -43,7 +46,34 @@ pub fn loader_of(id: &str) -> Option<&'static str> {
 /// Follows `inheritsFrom` rather than parsing the id: a fork's id says nothing about
 /// its loader, and `neoforge-21.1.265` does not contain the Minecraft version at all.
 pub fn platform(root: &DataRoot, id: &str) -> MlrcResult<Platform> {
+    let (mc, loader) = resolve(root, id)?;
+    match loader {
+        Some(loader) => Ok(Platform {
+            mc,
+            loader: loader.to_string(),
+        }),
+        None => Err(MlrcError::new(
+            ErrorCode::Usage,
+            format!(
+                "{id} is a vanilla version; mods need a loader (install with --loader fabric|quilt|forge|neoforge)"
+            ),
+        )
+        .with("version", id.to_string())),
+    }
+}
+
+/// The Minecraft version of an installed version, whatever it inherits from.
+///
+/// Packs need this and nothing else: a resource pack works on a vanilla client, so
+/// demanding a loader would refuse the common case.
+pub fn minecraft_of(root: &DataRoot, id: &str) -> MlrcResult<String> {
+    Ok(resolve(root, id)?.0)
+}
+
+/// Walks `inheritsFrom` to the root of the chain.
+fn resolve(root: &DataRoot, id: &str) -> MlrcResult<(String, Option<&'static str>)> {
     let mut current = id.to_string();
+    let mut loader: Option<&'static str> = None;
 
     for _ in 0..8 {
         let document = VersionJson::read_cached(root, &current)?.ok_or_else(|| {
@@ -53,28 +83,19 @@ pub fn platform(root: &DataRoot, id: &str) -> MlrcResult<Platform> {
             )
         })?;
 
-        if let Some(loader) = loader_of(&current) {
-            let mc = document
-                .inherits_from
-                .clone()
-                .unwrap_or_else(|| current.clone());
-            return Ok(Platform {
-                mc,
-                loader: loader.to_string(),
-            });
+        if loader.is_none() {
+            loader = loader_of(&current);
         }
 
         match document.inherits_from.clone() {
             Some(parent) => current = parent,
-            None => break,
+            None => return Ok((current, loader)),
         }
     }
 
     Err(MlrcError::new(
         ErrorCode::Usage,
-        format!(
-            "{id} is a vanilla version; mods need a loader (install with --loader fabric|quilt|forge|neoforge)"
-        ),
+        format!("{id} inherits through more than eight versions"),
     )
     .with("version", id.to_string()))
 }
@@ -97,6 +118,7 @@ pub async fn plan(
     http: &HttpClient,
     platform: &Platform,
     project: &str,
+    kind: Kind,
     source: Source,
     key: Option<&str>,
 ) -> MlrcResult<Vec<PlannedMod>> {
@@ -108,9 +130,11 @@ pub async fn plan(
                 http,
                 Target::Project(project.to_string()),
                 platform,
+                kind,
                 0,
                 &mut seen,
                 &mut versions,
+                &crate::events::NullSink,
             )
             .await?;
 
@@ -217,18 +241,32 @@ impl Source {
 /// Installs from whichever source the caller picked.
 ///
 /// `key` is only needed for CurseForge, which authenticates every request.
+#[allow(clippy::too_many_arguments)]
 pub async fn install_from(
     http: &HttpClient,
     game_dir: &Path,
     platform: &Platform,
     project: &str,
+    kind: Kind,
+    world: Option<&str>,
     source: Source,
     key: Option<&str>,
     sink: &dyn EventSink,
 ) -> MlrcResult<Vec<InstalledMod>> {
     match source {
-        Source::Modrinth => install(http, game_dir, platform, project, sink).await,
+        Source::Modrinth => install(http, game_dir, platform, project, kind, world, sink).await,
         Source::CurseForge => {
+            // CurseForge only knows mods here: its class ids for packs would need a
+            // second mapping for no gain, since Modrinth carries all four kinds.
+            if kind != Kind::Mod {
+                return Err(MlrcError::new(
+                    ErrorCode::Usage,
+                    format!(
+                        "curseforge only serves mods; install {} from modrinth instead",
+                        kind.as_str()
+                    ),
+                ));
+            }
             let key = key.ok_or_else(missing_key)?;
             install_curseforge(http, game_dir, platform, key, project, sink).await
         }
@@ -330,6 +368,7 @@ async fn install_curseforge(
             filename: file.file_name.clone(),
             sha1: file.sha1.clone(),
             source: Source::CurseForge.as_str().to_string(),
+            kind: String::new(),
         });
     }
 
@@ -379,6 +418,8 @@ pub async fn install(
     game_dir: &Path,
     platform: &Platform,
     project: &str,
+    kind: Kind,
+    world: Option<&str>,
     sink: &dyn EventSink,
 ) -> MlrcResult<Vec<InstalledMod>> {
     let mut seen = BTreeSet::new();
@@ -387,13 +428,15 @@ pub async fn install(
         http,
         Target::Project(project.to_string()),
         platform,
+        kind,
         0,
         &mut seen,
         &mut versions,
+        sink,
     )
     .await?;
 
-    let dir = mods_dir(game_dir);
+    let dir = kind.dir(game_dir, world);
     std::fs::create_dir_all(&dir)?;
 
     let mut manifest = Manifest::load(game_dir)?;
@@ -424,6 +467,7 @@ pub async fn install(
                 &root_id,
                 &version,
                 &file.filename,
+                kind,
             )
             .await;
             continue;
@@ -473,6 +517,7 @@ pub async fn install(
             &root_id,
             &version,
             &file.filename,
+            kind,
         )
         .await;
     }
@@ -493,6 +538,7 @@ async fn record(
     root_id: &str,
     version: &modrinth::Version,
     filename: &str,
+    kind: Kind,
 ) {
     let project = if version.project_id == root_id {
         requested.to_string()
@@ -517,6 +563,7 @@ async fn record(
         filename: filename.to_string(),
         sha1: String::new(),
         source: Source::Modrinth.as_str().to_string(),
+        kind: kind.as_str().to_string(),
     });
 }
 
@@ -569,13 +616,15 @@ pub async fn update(
         let source = Source::parse(&entry.source)?;
         let latest: Option<Latest> = match source {
             Source::Modrinth => {
-                let version = modrinth::version_for(
-                    http,
-                    &entry.project_id,
-                    &manifest.minecraft,
-                    &manifest.loader,
-                )
-                .await?;
+                // An entry records its kind; older manifests have none and mean mods.
+                let kind = Kind::parse(&entry.kind).unwrap_or(Kind::Mod);
+                let loader = match kind {
+                    Kind::Mod => Some(manifest.loader.as_str()),
+                    _ => None,
+                };
+                let version =
+                    modrinth::version_for(http, &entry.project_id, &manifest.minecraft, loader)
+                        .await?;
                 if version.id == entry.version_id {
                     None
                 } else {
@@ -703,6 +752,7 @@ pub async fn update(
             filename: new_name.clone(),
             sha1: String::new(),
             source: entry.source.clone(),
+            kind: entry.kind.clone(),
         });
 
         outcomes.push(UpdateOutcome {
@@ -864,21 +914,31 @@ pub fn set_enabled(
 }
 
 /// Depth-first over required dependencies, de-duplicated by project.
+#[allow(clippy::too_many_arguments)]
 async fn collect(
     http: &HttpClient,
     target: Target,
     platform: &Platform,
+    kind: Kind,
     depth: usize,
     seen: &mut BTreeSet<String>,
     out: &mut Vec<modrinth::Version>,
+    sink: &dyn EventSink,
 ) -> MlrcResult<()> {
     if depth > 8 {
         return Ok(());
     }
 
+    // A mod is resolved by loader and game version; a pack only by game version, since
+    // a resource pack has no loader and its file works on any modded client.
+    let loader = match kind {
+        Kind::Mod => Some(platform.loader.as_str()),
+        _ => None,
+    };
+
     let version = match target {
         Target::Project(project) => {
-            modrinth::version_for(http, &project, &platform.mc, &platform.loader).await?
+            modrinth::version_for(http, &project, &platform.mc, loader).await?
         }
         Target::Version(id) => modrinth::version_by_id(http, &id).await?,
     };
@@ -900,10 +960,41 @@ async fn collect(
         })
         .collect();
 
+    // Only a mod can carry a mod dependency. A shader usually needs Iris or OptiFine,
+    // and installing that silently would put a mod in a folder full of packs, so the
+    // requirement is reported and left to the caller.
+    if kind != Kind::Mod && !dependencies.is_empty() {
+        sink.emit(Event::Note {
+            message: format!(
+                "{} needs: {} (install with `mlrc mod install <project>`)",
+                version.project_id,
+                version
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| dependency.kind == "required")
+                    .filter_map(|dependency| dependency.project_id.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+    }
+
     out.push(version);
 
-    for dependency in dependencies {
-        Box::pin(collect(http, dependency, platform, depth + 1, seen, out)).await?;
+    if kind == Kind::Mod {
+        for dependency in dependencies {
+            Box::pin(collect(
+                http,
+                dependency,
+                platform,
+                kind,
+                depth + 1,
+                seen,
+                out,
+                sink,
+            ))
+            .await?;
+        }
     }
 
     Ok(())

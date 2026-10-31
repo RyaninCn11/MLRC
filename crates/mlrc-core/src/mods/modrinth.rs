@@ -106,11 +106,22 @@ pub async fn search(
     http: &HttpClient,
     query: &str,
     mc: &str,
-    loader: &str,
+    loader: Option<&str>,
+    kind: crate::mods::Kind,
     limit: u32,
 ) -> MlrcResult<Vec<Hit>> {
     // Facets are AND-ed groups of OR-ed values, as JSON inside one query parameter.
-    let facets = format!(r#"[["project_type:mod"],["versions:{mc}"],["categories:{loader}"]]"#);
+    // A resource pack has no loader, so its facet list is one group shorter.
+    let facets = match loader {
+        Some(loader) => format!(
+            r#"[["project_type:{}"],["versions:{mc}"],["categories:{loader}"]]"#,
+            kind.project_type()
+        ),
+        None => format!(
+            r#"[["project_type:{}"],["versions:{mc}"]]"#,
+            kind.project_type()
+        ),
+    };
 
     let response: SearchResponse = http
         .get_json_query(
@@ -127,21 +138,20 @@ pub async fn search(
     Ok(response.hits)
 }
 
-/// Newest version of `project` that runs on `mc` with `loader`.
+/// Newest version of `project` that runs on `mc`, optionally on `loader`.
 pub async fn version_for(
     http: &HttpClient,
     project: &str,
     mc: &str,
-    loader: &str,
+    loader: Option<&str>,
 ) -> MlrcResult<Version> {
+    let mut query: Vec<(&str, String)> = vec![("game_versions", format!(r#"["{mc}"]"#))];
+    if let Some(loader) = loader.filter(|value| !value.is_empty()) {
+        query.push(("loaders", format!(r#"["{loader}"]"#)));
+    }
+
     let versions: Vec<Version> = http
-        .get_json_query(
-            &format!("{BASE}/project/{project}/version"),
-            &[
-                ("game_versions", format!(r#"["{mc}"]"#)),
-                ("loaders", format!(r#"["{loader}"]"#)),
-            ],
-        )
+        .get_json_query(&format!("{BASE}/project/{project}/version"), &query)
         .await?;
 
     // Modrinth returns newest first, beta releases included. Prefer a stable one so
@@ -152,9 +162,13 @@ pub async fn version_for(
         .unwrap_or(0);
 
     versions.into_iter().nth(chosen).ok_or_else(|| {
+        let target = match loader.filter(|value| !value.is_empty()) {
+            Some(loader) => format!("minecraft {mc} on {loader}"),
+            None => format!("minecraft {mc}"),
+        };
         MlrcError::new(
             ErrorCode::ModNotFound,
-            format!("{project} has no release for minecraft {mc} on {loader}"),
+            format!("{project} has no release for {target}"),
         )
         .with("project", project.to_string())
     })
@@ -168,9 +182,23 @@ pub async fn version_by_id(http: &HttpClient, id: &str) -> MlrcResult<Version> {
 struct Project {
     #[serde(default)]
     slug: String,
+    #[serde(default)]
+    project_type: String,
 }
 
 /// Slug for a project id, for labelling dependencies the user did not name.
+/// What a project is: `mod`, `resourcepack`, `shader` or `datapack`.
+///
+/// `pack install` uses it to decide the destination instead of trusting a flag, so
+/// `mlrc pack install sodium` fails with "that is a mod" rather than dropping a jar in
+/// `resourcepacks/`.
+pub async fn project_type(http: &HttpClient, id: &str) -> MlrcResult<String> {
+    let project: Project = http
+        .get_json_query(&format!("{BASE}/project/{id}"), &[])
+        .await?;
+    Ok(project.project_type)
+}
+
 pub async fn project_slug(http: &HttpClient, id: &str) -> MlrcResult<String> {
     let project: Project = http
         .get_json_query(&format!("{BASE}/project/{id}"), &[])

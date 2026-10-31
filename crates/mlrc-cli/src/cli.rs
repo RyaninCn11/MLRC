@@ -135,6 +135,12 @@ pub enum Command {
         game_args: Vec<String>,
     },
 
+    /// Resource packs, shader packs and data packs
+    Pack {
+        #[command(subcommand)]
+        command: PackCommand,
+    },
+
     /// Manage forks: versions with their own worlds and mods
     Instance {
         #[command(subcommand)]
@@ -356,6 +362,64 @@ pub enum AuthCommand {
     Logout,
     /// Show the current account
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PackCommand {
+    /// Search Modrinth for packs
+    Search {
+        query: String,
+        /// What to search for; defaults to resource packs
+        #[arg(long, value_name = "KIND", default_value = "resourcepack")]
+        kind: String,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+        /// Minecraft version, when there is no installed version to read it from
+        #[arg(long, value_name = "VER")]
+        mc: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Install packs into a version's game directory
+    Install {
+        /// Modrinth slug or project id
+        projects: Vec<String>,
+        /// Override the kind Modrinth reports for the project
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        /// Install a data pack into this world instead of the game directory
+        #[arg(long, value_name = "WORLD")]
+        world: Option<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+        /// Print what would be installed, without downloading
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List installed packs
+    List {
+        /// Only this kind
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+    /// Remove packs by file name
+    Remove {
+        files: Vec<String>,
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        #[arg(long, value_name = "NAME")]
+        instance: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

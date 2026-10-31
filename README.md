@@ -87,7 +87,18 @@ mlrc mod update --instance survival --check
 mlrc mod disable lithium --instance survival    # renamed, not deleted
 ```
 
-**Packs.** `instance import` installs the loader a pack pins, its overrides and its
+**Content beyond mods.** Resource packs, shaders and data packs install the same way,
+into `resourcepacks/`, `shaderpacks/` and `datapacks/`:
+
+```bash
+mlrc pack search faithful --kind resourcepack --mc 1.21.1
+mlrc pack install faithful-32x --instance survival
+mlrc pack install complementary-reimagined --instance survival   # a shader
+mlrc pack install terralith --kind datapack --instance survival --world MyWorld
+mlrc pack list --instance survival
+```
+
+**Modpacks.** `instance import` installs the loader a pack pins, its overrides and its
 mods. Modrinth `.mrpack` and CurseForge `.zip` both work:
 
 ```bash
@@ -148,6 +159,7 @@ mlrc instance create demo --version 1.21.1 --game-arg --demo --brand Demo
 | `mlrc uninstall <version>` | Remove a version; the shared cache is kept |
 | `mlrc instance create \| list \| remove` | Forks: a version with its own worlds and mods, sharing the parent's files (`--memory`, `--jvm-arg`, `--game-arg`, `--pre-launch`, `--brand`) |
 | `mlrc mod search \| install \| list \| update \| remove \| enable \| disable` | Mods from Modrinth (or CurseForge with `--source curseforge`), filtered by the version's loader and Minecraft version; installs bring their required dependencies, `--dry-run` shows them first |
+| `mlrc pack search \| install \| list \| remove` | Resource packs, shader packs and data packs; the kind is read from Modrinth, `--world` puts a data pack inside one world |
 | `mlrc instance import <pack>` | Install a modpack (`.mrpack` or CurseForge `.zip`) as a new instance; `--dry-run` shows its contents first |
 | `mlrc java list \| install \| remove` | Manage Java runtimes by major version or component |
 | `mlrc auth login \| logout \| status` | Sign in to a Yggdrasil server, forget it, or show it |
