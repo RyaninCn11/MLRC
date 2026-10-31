@@ -112,7 +112,7 @@ setting is how a document drifts. Typing one now fails with the key that was mea
 | `auth.server` | Yggdrasil API root, empty | default for `mlrc auth login`; empty means offline only |
 | `auth.player_name` | 1-16 chars of `[A-Za-z0-9_]`, default `Player` | offline name |
 | `auth.nide8_id` | 32 hexadecimal characters, empty | unified pass server; empty disables the mode |
-| `auth.nide8_jar` | path, empty | `nide8auth.jar`; empty means `MLRC/injector/nide8auth.jar` |
+| `auth.nide8_jar` | path, empty | where `nide8auth.jar` lives; empty means `MLRC/injector/nide8auth.jar`, downloaded when missing |
 | `curseforge.api_key` | key, empty | enables the CurseForge source; `none` clears |
 
 Environment variables, which win over the file: `MLRC_DATA_DIR` (the base directory)
@@ -280,14 +280,14 @@ registration page and opens it in a browser, since creating the account is the s
 before logging in.
 
 The game then needs `-javaagent:nide8auth.jar=<id>` and `-Dnide8auth.client=true`, or it
-talks to Mojang and never joins that server. The jar is the user's: the service
-publishes no download url, so the launcher looks at `auth.nide8_jar`, then
-`MLRC/injector/nide8auth.jar`, and names the path it checked when neither exists. The
-server also publishes the SHA1 of that component, so every launch compares the local
-jar with it and warns when they differ - a server can update its jar at any time, and
-the failure otherwise looks like a login problem. Java 8u101 or newer is required by
-that component, and this is checked before launch rather than left to a failed start. A path containing `=` is passed relative to the game
-directory, because Java splits the agent argument on the first `=`.
+talks to Mojang and never joins that server. When the jar is missing the launcher offers
+to fetch it from `login.mc-user.com:233/index/jar` and checks the bytes against the hash
+the server publishes before writing them; `auth.nide8_jar` overrides where the file is
+kept. Every later launch re-checks it against the current hash and warns when the server
+has replaced its component, which otherwise shows up as a login that fails for no
+visible reason. Java 8u101 or newer is required by that component, and this is checked
+before launch rather than left to a failed start. A path containing `=` is passed
+relative to the game directory, because Java splits the agent argument on the first `=`.
 
 The token has a lifetime, and the launcher treats it as one: before starting the game it
 asks the server whether the token is still valid, refreshes it when the answer is no,

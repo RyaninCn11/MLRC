@@ -22,6 +22,50 @@ use crate::fetch::HttpClient;
 /// appended to it.
 pub const BASE: &str = "https://auth.mc-user.com:233";
 
+/// Where the service publishes its client component. The file it serves is the one the
+/// server document's `jarHash` describes, which is what makes downloading it safe: the
+/// bytes are checked against the server before they are used.
+pub const JAR_URL: &str = "https://login.mc-user.com:233/index/jar";
+
+/// Downloads the client component and checks it before it is written.
+///
+/// `expected` is the server's `jarHash`; when it is empty the file is still written, but
+/// the caller has nothing to verify against. The write goes through a `.part` sibling so
+/// an interrupted download cannot leave a truncated jar in place.
+pub async fn download_jar(
+    client: &HttpClient,
+    target: &std::path::Path,
+    expected_sha1: &str,
+) -> MlrcResult<std::path::PathBuf> {
+    let bytes = client.get_bytes(JAR_URL).await?;
+
+    let actual = crate::mods::sha1_of(&bytes);
+    if !expected_sha1.is_empty() && actual != expected_sha1 {
+        return Err(MlrcError::new(
+            ErrorCode::HashMismatch,
+            format!("nide8auth.jar failed its checksum: expected {expected_sha1}, got {actual}"),
+        )
+        .with("url", JAR_URL)
+        .with("expected", expected_sha1.to_string())
+        .with("actual", actual));
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let part = target.with_extension("jar.part");
+    std::fs::write(&part, &bytes)?;
+    std::fs::rename(&part, target).map_err(|err| {
+        let _ = std::fs::remove_file(&part);
+        MlrcError::new(
+            ErrorCode::Io,
+            format!("cannot write {}: {err}", target.display()),
+        )
+    })?;
+
+    Ok(target.to_path_buf())
+}
+
 /// The registration page for a server, for a front-end to open in a browser.
 pub fn register_url(server_id: &str) -> String {
     format!("https://login.mc-user.com:233/{server_id}/loginreg")

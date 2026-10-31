@@ -218,16 +218,13 @@ async fn cmd_auth(cli: &Cli, out: &Out, command: &AuthCommand) -> MlrcResult<()>
                 _ => {}
             }
 
-            // A unified pass client is the user's own jar: the service publishes no
-            // download url, so this only reports where it looked.
-            let injector = match unified {
-                Some(_) => match nide8_jar(&root, &cfg) {
-                    Ok(_) => None,
-                    Err(error) => {
-                        out.human(format!("warning: {}", error.message));
-                        None
-                    }
-                },
+            // The client component is offered here, right after logging in, because that
+            // is the moment the user decided to use this backend.
+            let injector = match &unified {
+                Some(server) => {
+                    ensure_nide8_jar(cli, out, &root, &cfg, &client, Some(server)).await?;
+                    None
+                }
                 None => Some(auth::yggdrasil::ensure_injector(&client, &root, mirror).await?),
             };
 
@@ -566,6 +563,7 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
 /// what is on disk - playing alone is the common case, and a dead network must not
 /// block it. The token is never printed; only the account name is.
 async fn refresh_session(
+    cli: &Cli,
     root: &DataRoot,
     cfg: &Config,
     session: auth::yggdrasil::Session,
@@ -574,11 +572,13 @@ async fn refresh_session(
     let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
     let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
 
-    // The service publishes the hash of its client component, so this is the one place
-    // a mismatched nide8auth.jar can be caught before the game starts and fails to
-    // authenticate with no explanation.
+    // The service publishes its client component and the hash of it, so a missing or
+    // stale jar is handled here, before the game starts and fails for no visible reason.
     if session.kind == "nide8" {
-        check_nide8_jar(&client, root, cfg, &session, out).await;
+        let server = auth::nide8::discover(&client, &session.server_id)
+            .await
+            .ok();
+        ensure_nide8_jar(cli, out, root, cfg, &client, server.as_ref()).await?;
     }
 
     match auth::yggdrasil::validate(&client, &session).await? {
@@ -1269,7 +1269,7 @@ async fn cmd_launch(
         None => auth::yggdrasil::Session::load(&root)?,
     };
     let session = match session {
-        Some(session) => Some(refresh_session(&root, &cfg, session, out).await?),
+        Some(session) => Some(refresh_session(cli, &root, &cfg, session, out).await?),
         None => None,
     };
 
@@ -2194,50 +2194,83 @@ fn open_in_browser(url: &str) -> MlrcResult<()> {
         .map(|_| ())
         .map_err(|err| MlrcError::new(ErrorCode::Io, err.to_string()))
 }
-/// Compares the local `nide8auth.jar` with the hash the server publishes.
+/// Makes sure `nide8auth.jar` is on disk, offering to download it when it is not.
 ///
-/// A warning, not an error: a server may have just updated its jar, and refusing to
-/// launch would be worse than telling the user what to fix.
-async fn check_nide8_jar(
-    client: &HttpClient,
+/// The service publishes the jar and the server document carries its hash, so a download
+/// can be verified before it is used. When the file is already there it is checked
+/// instead, and a mismatch is a warning rather than an error: a server may have just
+/// replaced its component, and refusing to launch would be worse than saying so.
+///
+/// A terminal is asked before anything is downloaded. A script or `--json` run cannot
+/// answer, and failing there would break the launch over a question whose answer is
+/// always yes, so it downloads and says so.
+async fn ensure_nide8_jar(
+    cli: &Cli,
+    out: &Out,
     root: &DataRoot,
     cfg: &Config,
-    session: &auth::yggdrasil::Session,
-    out: &Out,
-) {
-    let Ok(jar) = nide8_jar(root, cfg) else {
-        return;
-    };
-    let Ok(server) = auth::nide8::discover(client, &session.server_id).await else {
-        return;
-    };
-    if server.jar_sha1.is_empty() {
-        return;
+    client: &HttpClient,
+    server: Option<&auth::nide8::Server>,
+) -> MlrcResult<std::path::PathBuf> {
+    let target = nide8_jar_path(root, cfg);
+    let expected = server.map(|server| server.jar_sha1.as_str()).unwrap_or("");
+
+    if target.is_file() {
+        if let (false, Ok(bytes)) = (expected.is_empty(), std::fs::read(&target)) {
+            let actual = mods::sha1_of(&bytes);
+            if actual != expected {
+                out.human("warning: nide8auth.jar does not match the server's jarHash");
+                out.human(format!("  local:  {actual}"));
+                out.human(format!("  server: {expected}"));
+                out.human("  `mlrc auth login` downloads a fresh copy");
+            }
+        }
+        return Ok(target);
     }
-    let Ok(bytes) = std::fs::read(&jar) else {
-        return;
+
+    let consented = if interactive(cli, out) {
+        eprint!("nide8auth.jar is missing. download it from login.mc-user.com now? [Y/n] ");
+        std::io::stderr().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|err| MlrcError::new(ErrorCode::Io, format!("cannot read stdin: {err}")))?;
+        matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "" | "y" | "yes"
+        )
+    } else {
+        out.human("nide8auth.jar is missing; downloading it");
+        true
     };
 
-    let actual = mods::sha1_of(&bytes);
-    if actual != server.jar_sha1 {
-        out.human("warning: nide8auth.jar does not match the server's jarHash");
-        out.human(format!("  local:  {actual}"));
-        out.human(format!("  server: {}", server.jar_sha1));
-        out.human(
-            "  replace the jar with the server's current one, or the game may fail to authenticate",
-        );
+    if !consented {
+        return Err(MlrcError::new(
+            ErrorCode::AuthFailed,
+            "unified pass needs nide8auth.jar and it was not downloaded",
+        )
+        .with(
+            "hint",
+            "re-run and accept the download, or set `mlrc config set auth.nide8_jar <path>`",
+        ));
     }
+
+    let path = auth::nide8::download_jar(client, &target, expected).await?;
+    out.human(format!("nide8auth.jar -> {}", path.display()));
+    Ok(path)
 }
+
 /// The unified pass client jar: configured, or the conventional spot in the data folder.
-///
-/// The service publishes no download url, so a launcher either ships the jar or asks the
-/// user for it. This asks, with the exact path it looked at.
-fn nide8_jar(root: &DataRoot, cfg: &Config) -> MlrcResult<std::path::PathBuf> {
-    let path = if cfg.auth.nide8_jar.trim().is_empty() {
+fn nide8_jar_path(root: &DataRoot, cfg: &Config) -> std::path::PathBuf {
+    if cfg.auth.nide8_jar.trim().is_empty() {
         root.injector_dir().join("nide8auth.jar")
     } else {
         std::path::PathBuf::from(cfg.auth.nide8_jar.trim())
-    };
+    }
+}
+
+fn nide8_jar(root: &DataRoot, cfg: &Config) -> MlrcResult<std::path::PathBuf> {
+    let path = nide8_jar_path(root, cfg);
 
     if path.is_file() {
         Ok(path)
