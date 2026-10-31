@@ -89,10 +89,27 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+      - name: Release notes from the changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v header="## [$version]" '
+            index($0, header) == 1 { found = 1; next }
+            found && substr($0, 1, 4) == "## [" { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $version (expected: ## [$version])"
+            exit 1
+          fi
+          cat release-notes.md
+
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-notes.md
           files: dist/*
-          generate_release_notes: true
           fail_on_unmatched_files: true

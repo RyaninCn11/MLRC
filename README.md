@@ -218,6 +218,8 @@ crates/
 [docs/DOCS.md](docs/DOCS.md) is the design and the reasoning behind it,
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers how the code is organised, and
 [docs/API.md](docs/API.md) is the contract a front-end may depend on.
+[CHANGELOG.md](CHANGELOG.md) records what changed in each release; the release
+workflow publishes the matching section as the release notes.
 
 ## Mirrors and attribution
 

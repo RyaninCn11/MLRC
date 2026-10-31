@@ -250,6 +250,7 @@ manifest, and the pack importer.
 | An error code | `error.rs`: enum, `as_str`, `exit_code`; the message shape is checked by `tests/error_style.rs` |
 | An event | `events.rs`, the mapping in `mlrc-cli/src/json_sink.rs`, and `docs/API.md` |
 | A CLI command | `mlrc-cli/src/cli.rs` and `commands.rs` |
+| Something a user will notice | `CHANGELOG.md` under `[Unreleased]`; tagging renames that section to the version, and the release workflow refuses a tag without one |
 | A loader | `loader/` and the `--loader` value list in `cli.rs` |
 | A metadata quirk | `meta/`, and a note in section 2 above |
 | What a hash may be | `fetch/checksum.rs`; the download queue in `fetch/download.rs` decides between hash, length and neither |
