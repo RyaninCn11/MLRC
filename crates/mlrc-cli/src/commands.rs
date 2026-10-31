@@ -2137,11 +2137,17 @@ async fn cmd_mod(cli: &Cli, out: &Out, command: &ModCommand) -> MlrcResult<()> {
             let source = mods::Source::parse(source)?;
             let key = cfg.curseforge.key();
             let instance = load_instance(&root, instance.as_deref())?;
-            let (id, game_dir) = pack_target(&root, &cfg, version.as_deref(), instance.as_ref())?;
-            let platform = mods::Platform {
-                mc: mods::minecraft_of(&root, &id)?,
-                loader: String::new(),
-            };
+            // A mod needs a loader; packs do not, which is why this path uses
+            // `mod_platform` and `pack_target` exists for the other three kinds.
+            let (platform, target) = mod_platform(
+                &root,
+                &cfg,
+                version.as_deref(),
+                instance.as_ref(),
+                None,
+                None,
+            )?;
+            let game_dir = mods_game_dir(&root, instance.as_ref(), target)?;
 
             if *dry_run {
                 let mut planned = Vec::new();

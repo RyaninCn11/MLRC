@@ -146,7 +146,8 @@ pub async fn version_for(
     loader: Option<&str>,
 ) -> MlrcResult<Version> {
     let mut query: Vec<(&str, String)> = vec![("game_versions", format!(r#"["{mc}"]"#))];
-    if let Some(loader) = loader.filter(|value| !value.is_empty()) {
+    let loader = loader.filter(|value| !value.is_empty());
+    if let Some(loader) = loader {
         query.push(("loaders", format!(r#"["{loader}"]"#)));
     }
 
@@ -154,15 +155,10 @@ pub async fn version_for(
         .get_json_query(&format!("{BASE}/project/{project}/version"), &query)
         .await?;
 
-    // Modrinth returns newest first, beta releases included. Prefer a stable one so
-    // `mod install iris` does not quietly pick a beta, but fall back rather than fail.
-    let chosen = versions
-        .iter()
-        .position(|version| version.version_type == "release")
-        .unwrap_or(0);
+    let chosen = choose(&versions, loader.is_none());
 
     versions.into_iter().nth(chosen).ok_or_else(|| {
-        let target = match loader.filter(|value| !value.is_empty()) {
+        let target = match loader {
             Some(loader) => format!("minecraft {mc} on {loader}"),
             None => format!("minecraft {mc}"),
         };
@@ -172,6 +168,46 @@ pub async fn version_for(
         )
         .with("project", project.to_string())
     })
+}
+
+/// Which of the project's versions to take.
+///
+/// Modrinth returns them newest first, beta releases included, so a stable one wins a
+/// tie: `mod install iris` must not quietly pick a beta.
+///
+/// Without a loader to filter on - a resource pack, shader or data pack - the list also
+/// contains builds published for a specific mod loader, and those are the wrong file for
+/// a pack folder: Terralith ships `Terralith_1.21.1_v2.6.2_Neoforge.jar` and
+/// `Terralith_1.21_v2.5.8.zip` for the same game version, tagged `neoforge` and
+/// `datapack`. A build that names no mod loader is preferred, and the release preference
+/// still decides within each group.
+fn choose(versions: &[Version], prefer_plain: bool) -> usize {
+    if versions.is_empty() {
+        return 0;
+    }
+
+    let mut order: Vec<usize> = (0..versions.len()).collect();
+    order.sort_by_key(|index| {
+        let version = &versions[*index];
+        let release = version.version_type == "release";
+        if !prefer_plain {
+            return (!release, false);
+        }
+
+        let plain = !version.loaders.iter().any(|loader| is_mod_loader(loader));
+        (!release, !plain)
+    });
+
+    order.first().copied().unwrap_or(0)
+}
+
+/// The four loaders that swap mods at startup. A build tagged with one of them is a mod
+/// build, whatever else it also carries.
+fn is_mod_loader(tag: &str) -> bool {
+    matches!(
+        tag.to_ascii_lowercase().as_str(),
+        "fabric" | "quilt" | "forge" | "neoforge"
+    )
 }
 
 pub async fn version_by_id(http: &HttpClient, id: &str) -> MlrcResult<Version> {
@@ -208,4 +244,67 @@ pub async fn project_slug(http: &HttpClient, id: &str) -> MlrcResult<String> {
 
 pub fn user_agent() -> &'static str {
     USER_AGENT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(id: &str, kind: &str, loaders: &[&str]) -> Version {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "project_id": "p",
+            "version_type": kind,
+            "loaders": loaders,
+        }))
+        .expect("version parses")
+    }
+
+    #[test]
+    fn a_stable_release_beats_the_newest_beta() {
+        let versions = vec![
+            version("beta", "beta", &["fabric"]),
+            version("stable", "release", &["fabric"]),
+        ];
+        assert_eq!(choose(&versions, false), 1);
+    }
+
+    #[test]
+    fn a_plain_build_beats_a_loader_specific_one() {
+        // Newest first, as the API returns them: the NeoForge build is newer.
+        let versions = vec![
+            version("neoforge", "release", &["neoforge"]),
+            version("plain", "release", &["minecraft"]),
+        ];
+        assert_eq!(choose(&versions, true), 1, "the plain data pack wins");
+
+        // With a loader filter there is nothing to prefer, and order decides.
+        assert_eq!(choose(&versions, false), 0);
+    }
+
+    #[test]
+    fn a_data_pack_beats_the_mod_build_of_the_same_project() {
+        // What Terralith actually publishes for 1.21.1, newest first.
+        let versions = vec![
+            version("neoforge", "release", &["neoforge"]),
+            version("fabric", "release", &["fabric"]),
+            version("datapack", "release", &["datapack"]),
+        ];
+        assert_eq!(choose(&versions, true), 2, "the .zip data pack wins");
+    }
+
+    #[test]
+    fn a_shader_keeps_its_loader_specific_build() {
+        // Shaders are tagged iris/optifine; none is "plain", so the newest release wins.
+        let versions = vec![
+            version("new", "release", &["iris"]),
+            version("old", "release", &["optifine"]),
+        ];
+        assert_eq!(choose(&versions, true), 0);
+    }
+
+    #[test]
+    fn no_versions_is_not_a_panic() {
+        assert_eq!(choose(&[], true), 0);
+    }
 }
