@@ -406,7 +406,7 @@ stream.
 |---|---|
 | A mirror serves a stale or wrong file | SHA1 from the official document decides; mismatch is `E_NET_HASH` |
 | A proxy that does not forward | `general.proxy = none`, and `doctor` shows which path is taken |
-| An antivirus blocks writes inside the JVM | `doctor` probes a write and names the cause; loader remapping needs it |
+| The JVM runs with a restricted token | `doctor` probes a write and names the cause; loader remapping (fabric, neoforge) needs it. A sandbox, a CI agent, antivirus self-protection, or an executable and JDK inside a confined folder all produce this |
 | A version is deleted with a game running | removal retries, then fails with a `hint` rather than a half-deleted tree |
 | A modpack writes outside the game directory | entry paths are rejected unless they stay inside |
 | Two Minecraft versions need different Javas | one managed runtime per major, keyed by major |

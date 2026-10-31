@@ -254,7 +254,8 @@ fn java_writability(root: &DataRoot, java: &Path, major: u32) -> Check {
             name: "java writes",
             status: Status::Warn,
             detail: "reports every path read-only; loader remapping (fabric, neoforge) \
-                     will fail. Usually antivirus self-protection or a restricted token"
+                     will fail. The JVM is running with a restricted token: a sandbox, \
+                     an agent or CI runner, or antivirus self-protection"
                 .to_string(),
         }
     } else if text.contains("OK") {
