@@ -444,6 +444,42 @@ async fn cmd_list(cli: &Cli, out: &Out, all: bool) -> MlrcResult<()> {
     Ok(())
 }
 
+/// Makes a stored token usable before the game starts.
+///
+/// One request decides: a live token is used as it is, a rejected one is refreshed and
+/// the new one written back, and an unreachable server means the launch continues with
+/// what is on disk - playing alone is the common case, and a dead network must not
+/// block it. The token is never printed; only the account name is.
+async fn refresh_session(
+    root: &DataRoot,
+    cfg: &Config,
+    session: auth::yggdrasil::Session,
+    out: &Out,
+) -> MlrcResult<auth::yggdrasil::Session> {
+    let mirror = Mirror::from_config(cfg.general.mirror).unwrap_or(Mirror::Official);
+    let client = HttpClient::with_proxy(mirror, &cfg.general.proxy)?;
+
+    match auth::yggdrasil::validate(&client, &session).await? {
+        Some(true) => Ok(session),
+        Some(false) => {
+            let fresh = auth::yggdrasil::refresh(&client, &session)
+                .await
+                .map_err(|err| {
+                    MlrcError::new(err.code, err.message.clone()).with(
+                        "hint",
+                        "run `mlrc auth login` to sign in again, or `--username` to play offline",
+                    )
+                })?;
+            fresh.save(root)?;
+            out.human(format!("session refreshed for {}", fresh.name));
+            Ok(fresh)
+        }
+        None => {
+            out.human("cannot reach the authentication server; using the stored session");
+            Ok(session)
+        }
+    }
+}
 /// A human at the keyboard, not a pipe and not a machine-readable run.
 fn interactive(cli: &Cli, out: &Out) -> bool {
     use std::io::IsTerminal;
@@ -1106,6 +1142,10 @@ async fn cmd_launch(
         Some(_) => None,
         None if offline => None,
         None => auth::yggdrasil::Session::load(&root)?,
+    };
+    let session = match session {
+        Some(session) => Some(refresh_session(&root, &cfg, session, out).await?),
+        None => None,
     };
 
     let mut jvm_args = jvm_args.to_vec();

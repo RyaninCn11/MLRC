@@ -240,6 +240,8 @@ async fn a_stored_session_survives_a_restart() {
     let loaded = Session::load(&root).expect("load").expect("present");
     assert_eq!(loaded.name, "Steve");
     assert_eq!(loaded.access_token, "token-1");
+    // The write goes through a temporary file and leaves nothing behind.
+    assert!(!Session::file(&root).with_extension("json.part").exists());
 
     let _ = std::fs::remove_dir_all(&base);
 }

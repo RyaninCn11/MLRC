@@ -23,7 +23,11 @@ const AGENT_NAME: &str = "Minecraft";
 const AGENT_VERSION: u32 = 1;
 
 /// What `mlrc auth login` produces and `mlrc launch` consumes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Debug` is written by hand: a token in a log line, a panic message or a `{:?}` in an
+/// error is a credential leak, and the only way to be sure it never happens is to make
+/// the token unprintable.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
     /// API root the account belongs to.
     pub server: String,
@@ -35,6 +39,19 @@ pub struct Session {
     pub uuid: String,
     pub access_token: String,
     pub client_token: String,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("server", &self.server)
+            .field("username", &self.username)
+            .field("name", &self.name)
+            .field("uuid", &self.uuid)
+            .field("access_token", &"<redacted>")
+            .field("client_token", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Session {
@@ -321,6 +338,8 @@ fn read(path: &Path) -> MlrcResult<Option<Session>> {
     }
 }
 
+/// Writes the session through a temporary file, so a crash cannot leave half a JSON
+/// document behind, and so the file is never world-readable even for an instant.
 fn write(path: &Path, session: &Session) -> MlrcResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -328,22 +347,46 @@ fn write(path: &Path, session: &Session) -> MlrcResult<()> {
 
     let text = serde_json::to_string_pretty(session)
         .map_err(|err| MlrcError::new(ErrorCode::Io, err.to_string()))?;
-    std::fs::write(path, text).map_err(|err| {
+
+    let part = path.with_extension("json.part");
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&part).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot create {}: {err}", part.display()),
+            )
+        })?;
+
+        // The permissions are set before any byte is written, so the token is never
+        // readable by another user, not even between `create` and `chmod`.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
+        }
+
+        file.write_all(text.as_bytes()).map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot write {}: {err}", part.display()),
+            )
+        })?;
+        file.sync_all().map_err(|err| {
+            MlrcError::new(
+                ErrorCode::Io,
+                format!("cannot flush {}: {err}", part.display()),
+            )
+        })?;
+    }
+
+    std::fs::rename(&part, path).map_err(|err| {
+        let _ = std::fs::remove_file(&part);
         MlrcError::new(
             ErrorCode::Io,
             format!("cannot write {}: {err}", path.display()),
         )
-    })?;
-
-    // The file holds a token: make it readable by the owner only where the platform
-    // has the notion. On Windows the account's ACL already keeps it private.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
-
-    Ok(())
+    })
 }
 
 /// Where authlib-injector lives, and the JVM argument that installs it.
@@ -516,6 +559,26 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert_ne!(first, second);
         assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn a_session_never_prints_its_tokens() {
+        let session = Session {
+            server: "https://example.invalid/api/yggdrasil".to_string(),
+            username: "steve".to_string(),
+            name: "Steve".to_string(),
+            uuid: "b50ad385-829d-3141-a216-7e7d7539ba7f".to_string(),
+            access_token: "secret-access-token".to_string(),
+            client_token: "secret-client-token".to_string(),
+        };
+
+        let text = format!("{session:?}");
+        assert!(!text.contains("secret-access-token"), "{text}");
+        assert!(!text.contains("secret-client-token"), "{text}");
+        assert!(text.contains("<redacted>"));
+        // Everything that is not a credential stays readable, for support.
+        assert!(text.contains("Steve"));
+        assert!(text.contains("example.invalid"));
     }
 
     #[test]

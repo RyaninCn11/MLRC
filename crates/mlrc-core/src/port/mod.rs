@@ -22,6 +22,28 @@ const LAUNCHER_DIR: &str = "MLRC";
 ///
 /// Portable mode is the default: `<directory of mlrc.exe>`. It is never silently
 /// replaced by a per-user location - if the directory is not writable the caller gets
+/// How the base directory was chosen.
+///
+/// `Portable` is everything that exists today: the data lives beside the executable, or
+/// wherever `--data-dir` / `MLRC_DATA_DIR` points. `Managed` is reserved for a
+/// distribution that cannot write next to itself (`Program Files`, `/usr/bin`, an
+/// application bundle); nothing resolves to it yet, which is why `resolve` never
+/// returns it. Keeping the distinction in the type is what lets a caller ask the
+/// question before there is an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataMode {
+    Portable,
+    Managed,
+}
+
+impl DataMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Portable => "portable",
+            Self::Managed => "managed",
+        }
+    }
+}
 /// `E_PORTABLE_READONLY` and decides what to do instead.
 #[derive(Debug, Clone)]
 pub struct DataRoot {
@@ -64,6 +86,42 @@ impl DataRoot {
             base: dir.to_path_buf(),
             portable: true,
         })
+    }
+
+    /// Where the launcher would keep its data if it were not portable.
+    ///
+    /// Reserved, not used yet: a distribution in `Program Files`, `/usr/bin` or an
+    /// application bundle cannot write next to its executable, and the answer will be a
+    /// second mode rather than silently moving the data. The paths below are the
+    /// platform conventions, so the future mode has one place to look.
+    pub fn managed_dir() -> Option<PathBuf> {
+        #[cfg(windows)]
+        {
+            std::env::var_os("APPDATA").map(|base| PathBuf::from(base).join("MLRC"))
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::env::var_os("HOME")
+                .map(|home| PathBuf::from(home).join("Library/Application Support/MLRC"))
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+                })
+                .map(|base| base.join("mlrc"))
+        }
+    }
+
+    /// The mode this run uses: portable (the default) or managed, when one arrives.
+    pub fn mode(&self) -> DataMode {
+        if self.portable {
+            DataMode::Portable
+        } else {
+            DataMode::Managed
+        }
     }
 
     /// The directory holding `.minecraft` and `MLRC`.
