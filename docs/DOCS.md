@@ -310,11 +310,9 @@ Its output is inherited rather than captured, and a non-zero status stops the la
 with `E_PRE_LAUNCH`: a command that exists to prepare state should not be ignored when
 it fails.
 
-**The window title is not settable.** Minecraft chooses its own title, and it reads no
-property for it; changing it needs bytecode patching or a Java agent, which this
-launcher does not ship. What the game *does* read is the brand string
-(`-Dminecraft.launcher.brand`), and that is `launch.brand`. Mojang stopped displaying it
-in 26.1, so on newer versions the property is passed and has nowhere to show.
+`launch.brand` is the string the game prints in the corner of the main menu, through
+`-Dminecraft.launcher.brand`. Mojang stopped displaying it in 26.1, so newer versions
+receive the property and have nowhere to show it.
 
 ### 5.4 Game language
 
