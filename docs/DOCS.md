@@ -154,6 +154,21 @@ Idempotent: an already-complete version re-checks sizes and stops without networ
 beyond the manifest. An interrupted install leaves `complete: false`, which the next
 run repairs and launch refuses.
 
+**What "verified" means.** Two different promises, kept apart on purpose:
+
+| | Verified against | Catches |
+|---|---|---|
+| A hash the source publishes | SHA1 from Mojang, SHA512 from Modrinth, SHA256 from the injector API - whichever is strongest | damage in transit, a mirror serving something else, a file swapped after publication |
+| No hash published | the length, when the source declares one | a truncated or padded transfer |
+
+A hash is corruption detection, not proof of origin: it comes over the same connection
+as the file, so TLS is what makes it meaningful. SHA1 is enough to notice accidental
+damage and is not collision-resistant; where a source offers something stronger, the
+stronger one is used. Every file, hashed or not, is written to a `.part` sibling,
+flushed, and renamed into place, so an interrupted transfer never leaves a short file
+where a complete one belongs. A run that accepted files without a hash says how many,
+because "installed" should not hide that.
+
 ### 4.2 The Java gate
 
 `javaVersion.majorVersion` drives everything; a document without that block is
@@ -241,8 +256,21 @@ online-mode servers, with an error that blames the server. The jar is fetched on
 verified against the published SHA-256, then reused from disk so launches stay
 offline-capable.
 
-The session file is plaintext, like every launcher's profile file. `mlrc auth logout`
-revokes the token server-side and deletes the file.
+The token has a lifetime, and the launcher treats it as one: before starting the game it
+asks the server whether the token is still valid, refreshes it when the answer is no,
+and continues with what is on disk when the server cannot be reached - playing alone
+should not need a working network. `mlrc auth logout` revokes the token server-side and
+deletes the file regardless of whether the server answered; the local session is gone
+either way.
+
+The file is plaintext, like every launcher's profile file, and written through a
+temporary file with `0600` set before the first byte, so a crash cannot leave half a
+document and another user cannot read the token even for an instant. On Unix that is the
+whole story; on Windows the file inherits the ACL of the folder it lives in, which is
+private in a user profile and is not in a shared folder. The token never appears in
+output: the session's `Debug` implementation redacts it, so a log line, a panic message
+or a `{:?}` in an error cannot leak it. `--accessToken` is masked in `launch --dry-run`
+and in verbose logs.
 
 ### 5.2 Game directory and forks
 
@@ -335,7 +363,8 @@ E_MOD_RESTRICTED     E_DOCTOR_FAILED      E_IO
 ```
 
 The code is the contract; a front-end maps codes to its own strings, which is why C1
-forbids translated text in the engine. Messages have a fixed shape, enforced by a test:
+forbids translated text in the engine. The full contract - events, ordering, decisions,
+cancellation, recovery - is in [API.md](API.md). Messages have a fixed shape, enforced by a test:
 one lowercase sentence, no trailing period, no `error:` prefix, what failed and what to
 do about it. Details go in `context` - ids, urls, status codes, counts - and the one
 reserved key is `hint`, printed on its own line because it is advice, not data.
@@ -377,6 +406,9 @@ stream.
 | A modpack writes outside the game directory | entry paths are rejected unless they stay inside |
 | Two Minecraft versions need different Javas | one managed runtime per major, keyed by major |
 | The shared library tree is touched by another launcher | accepted: libraries are content-addressed and re-verified by SHA1 on the next install |
+| A loader artifact has no published hash | length checked, written atomically, and the run reports how many such files there were |
+| The portable folder is somewhere shared | the token file inherits that folder's ACL on Windows; on Unix it is `0600` regardless |
+| A distribution cannot write next to itself | `E_PORTABLE_READONLY` today; a managed mode is reserved in `DataMode` and not implemented |
 
 ---
 

@@ -177,9 +177,10 @@ emits NDJSON events carrying the same error codes.
   the standard layout, `MLRC` for the launcher's own data. If the folder is not
   writable the launcher fails with `E_PORTABLE_READONLY` instead of relocating into the
   user profile.
-- **Hashes are the authority.** Every file is checked against the SHA1 from Mojang's
-  metadata. A mirror is only a URL substitution; a file it does not carry falls back to
-  the official URL.
+- **Hashes are the authority.** Every file is checked against the hash its source publishes
+  (SHA1 from Mojang, SHA512 from Modrinth, SHA256 from the injector API), or against its
+  length when a source publishes no hash. A mirror is only a URL substitution; a file it
+  does not carry falls back to the official URL.
 - **Java is pinned per version.** Runtimes live under `MLRC/java/jdk-<major>/` and the
   host JDK is ignored unless `java.custom=true`, so a system JDK upgrade cannot break an
   installed version.
@@ -194,7 +195,9 @@ crates/
 `-- mlrc-cli/     binary: argument parsing, rendering, prompts, exit codes
 ```
 
-[docs/DOCS.md](docs/DOCS.md) is the design and the reasoning behind it; [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers how the code is organised.
+[docs/DOCS.md](docs/DOCS.md) is the design and the reasoning behind it,
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers how the code is organised, and
+[docs/API.md](docs/API.md) is the contract a front-end may depend on.
 
 ## Mirrors and attribution
 

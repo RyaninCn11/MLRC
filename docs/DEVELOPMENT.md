@@ -1,7 +1,8 @@
 # MLRC - development notes
 
 How the code is organised and the parts of the metadata that shape it. The design -
-what the launcher promises and why - is in [DOCS.md](DOCS.md).
+what the launcher promises and why - is in [DOCS.md](DOCS.md); what a front-end may
+depend on is in [API.md](API.md).
 
 ---
 
@@ -17,6 +18,7 @@ crates/mlrc-core/src/
   plan/       install plan: what this machine needs                 pure
   launch/     arguments, natives, spawning                          pure + std
   fetch/      http client, download queue, mirrors, proxy
+              checksum.rs: SHA1/SHA256/SHA512, strongest wins
   store/      content-addressed store, hardlink materialization
   java/       managed runtimes: discover, validate, install
   auth/       offline derivation, Yggdrasil
@@ -249,6 +251,8 @@ manifest, and the pack importer.
 | A CLI command | `mlrc-cli/src/cli.rs` and `commands.rs` |
 | A loader | `loader/` and the `--loader` value list in `cli.rs` |
 | A metadata quirk | `meta/`, and a note in section 2 above |
+| What a hash may be | `fetch/checksum.rs`; the download queue in `fetch/download.rs` decides between hash, length and neither |
+| What a front-end may rely on | `docs/API.md`, and the test that keeps the error style honest |
 
 ---
 
